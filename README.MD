@@ -119,10 +119,10 @@ python3 pro-gcp-tts.py  --f cap1/ocr/ --o cap1/audio
 - Using NLTK for sentence tokenization
 - Combining sentences with two line breaks for new paragraphs
 - Various text clean-up operations for TTS
-- Removing hyphens between words
-- Replacing multiple spaces with a single space
-- Removing space before commas
-- Replacing '&' with 'and'
+- - Removing hyphens between words
+- - Replacing multiple spaces with a single space
+- - Removing space before commas
+-- Replacing '&' with 'and'
 - Writing the cleaned up text back to the file
 - Printing a success message when all files have been processed
 - Printing an error message if something goes wrong
