@@ -29,11 +29,18 @@ pip install google-cloud-texttospeech
    - `--f`: Folder containing the text files to be processed.
    - `--o`: Folder to save the generated audio files.
 
+the pdf processing script has two modes: split creates a TXT file for each one of the pages in the range, and the other mode PHOTO, creates one image for each one of the pages in the selected range.
+
+
+   - `--m`: mode: create a txt or a photo for each page in the pdf (photo is meant as preparation step for to use OCR)
+   - `--p`: pages to be processed. can be a single page, comma separated list or a range using -
+
+
 For example:
 ```bash
 python3 pre-pdf.py --f book.pdf --o ./cap1 --m split --p 19-43
 python3 pre-pdf.py --f book.pdf --o ./cap1 --m photo --p 19-43
-python3 pre-cleanup.py --f cap1/
+python3 pre-cleanup.py --f cap1/txt_files/
 python3 pro-gcp-ocr.py  --f cap1/img/ --o cap1/ocr
 python3 pro-gcp-tts.py  --f cap1/ocr/ --o cap1/audio
 ```
