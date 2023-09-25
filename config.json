@@ -1,0 +1,23 @@
+{
+    "VisionAPI": {
+        "image_context": {
+            "language_hints": ["en"]
+        }
+    },
+    "TextToSpeechAPI": {
+        "voice": {
+            "language_code": "en-US",
+            "ssml": "en-US-Neural2-B",
+            "text": "en-US-Wavenet-C",
+            "ssml_gender": "FEMALE"
+        },
+        "audio_config": {
+            "audio_encoding": "LINEAR16",
+            "effects_profile_id": [
+                "headphone-class-device"
+            ],
+            "pitch": 0,
+            "speaking_rate": 1
+        }
+    }
+}

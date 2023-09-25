@@ -1,0 +1,105 @@
+#aicommits hook install
+#pre-commit install
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+    -   id: check-added-large-files
+        name: check for added large files
+        description: prevents giant files from being committed.
+        entry: check-added-large-files
+        language: python
+        stages: [commit, push, manual]
+    -   id: check-json
+        name: check json
+        description: checks json files for parseable syntax.
+        entry: check-json
+        language: python
+        types: [json]
+    -   id: check-shebang-scripts-are-executable
+        name: check that scripts with shebangs are executable
+        description: ensures that (non-binary) files with a shebang are executable.
+        entry: check-shebang-scripts-are-executable
+        language: python
+        types: [text]
+        stages: [commit, push, manual]
+    # -   id: pretty-format-json
+    #     name: pretty format json
+    #     description: sets a standard for formatting json files.
+    #     entry: pretty-format-json
+    #     language: python
+    #     types: [json]
+    -   id: check-merge-conflict
+        name: check for merge conflicts
+        description: checks for files that contain merge conflict strings.
+        entry: check-merge-conflict
+        language: python
+        types: [text]
+    -   id: check-symlinks
+        name: check for broken symlinks
+        description: checks for symlinks which do not point to anything.
+        entry: check-symlinks
+        language: python
+        types: [symlink]
+    -   id: check-yaml
+        name: check yaml
+        description: checks yaml files for parseable syntax.
+        entry: check-yaml
+        language: python
+        types: [yaml]
+    -   id: destroyed-symlinks
+        name: detect destroyed symlinks
+        description: detects symlinks which are changed to regular files with a content of a path which that symlink was pointing to.
+        entry: destroyed-symlinks
+        language: python
+        types: [file]
+    -   id: detect-private-key
+        name: detect private key
+        description: detects the presence of private keys.
+        entry: detect-private-key
+        language: python
+        types: [text]
+    -   id: double-quote-string-fixer
+        name: fix double quoted strings
+        description: replaces double quoted strings with single quoted strings.
+        entry: double-quote-string-fixer
+        language: python
+        types: [python]
+    -   id: end-of-file-fixer
+        name: fix end of files
+        description: ensures that a file is either empty, or ends with one newline.
+        entry: end-of-file-fixer
+        language: python
+        types: [text]
+        stages: [commit, push, manual]
+    -   id: fix-byte-order-marker
+        name: fix utf-8 byte order marker
+        description: removes utf-8 byte order marker.
+        entry: fix-byte-order-marker
+        language: python
+        types: [text]
+    -   id: mixed-line-ending
+        name: mixed line ending
+        description: replaces or checks mixed line ending.
+        entry: mixed-line-ending
+        language: python
+        types: [text]
+    # -   id: no-commit-to-branch
+    #     name: "don't commit to branch"
+    #     entry: no-commit-to-branch
+    #     language: python
+    #     pass_filenames: false
+    #     always_run: false
+    -   id: sort-simple-yaml
+        name: sort simple yaml files
+        description: sorts simple yaml files which consist only of top-level keys, preserving comments and blocks.
+        language: python
+        entry: sort-simple-yaml
+        files: '^$'
+    -   id: trailing-whitespace
+        name: trim trailing whitespace
+        description: trims trailing whitespace.
+        entry: trailing-whitespace-fixer
+        language: python
+        types: [text]
+        stages: [commit, push, manual]
