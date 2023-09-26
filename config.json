@@ -7,7 +7,6 @@
     "TextToSpeechAPI": {
         "voice": {
             "language_code": "en-US",
-            "ssml": "en-US-Neural2-B",
             "text": "en-US-Wavenet-C",
             "ssml_gender": "FEMALE"
         },
@@ -18,6 +17,13 @@
             ],
             "pitch": 0,
             "speaking_rate": 1
+        },
+        "Pricing": {
+            "Neural2": 0.000016,
+            "Polyglot": 0.000016,
+            "Studio": 0.00016,
+            "Standard": 0.000004,
+            "WaveNet": 0.000016
         }
     }
 }
