@@ -4,16 +4,22 @@ import argparse
 from pathlib import Path
 from google.cloud import vision_v1p3beta1 as vision
 
-# Configuración de las credenciales de GCP
-os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'credentials.json'
+# La raíz del repositorio queda un nivel por encima de esta carpeta
+RAIZ = Path(__file__).resolve().parent.parent
+import sys
+sys.path.insert(0, str(RAIZ))
+
+from nucleo import gcp
 
 # Argumentos desde la línea de comando
 parser = argparse.ArgumentParser(description='Procesar imágenes y generar archivos de texto.')
 parser.add_argument('--f', dest='folder_input', required=True, help='Carpeta con las imágenes a procesar')
 parser.add_argument('--o', dest='folder_output', required=True, help='Carpeta donde guardar los archivos de texto generados')
+parser.add_argument('--cred', dest='cred', help='Ruta a una llave JSON de cuenta de servicio. Innecesaria si ADC o credentials.json ya dan acceso.')
 args = parser.parse_args()
 
-# Inicializa el cliente de Vision
+# Inicializa el cliente de Vision, resolviendo antes las credenciales
+print(f'Credenciales de Google: {gcp.preparar_credenciales(args.cred)}', flush=True)
 client_vision = vision.ImageAnnotatorClient()
 
 # Directorios de archivos
@@ -24,7 +30,7 @@ folder_output = Path(args.folder_output)
 folder_output.mkdir(parents=True, exist_ok=True)
 
 # Cargar configuraciones de JSON
-with open('config.json') as f:
+with open(RAIZ / 'config.json') as f:
     config = json.load(f)
 
 

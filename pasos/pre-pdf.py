@@ -1,38 +1,35 @@
 # Importing required libraries
 import argparse
 import os
-from PyPDF2 import PdfReader
 import fitz
 
-# Function to split pages from a PDF and save as text files
+# Function to split pages from a PDF and save as text files. The text is read
+# with PyMuPDF in reading order, the same library the photo mode already uses
 def split_pages_from_pdf(pdf_path, output_folder, pages):
     try:
-        # Open the PDF file
-        with open(pdf_path, 'rb') as file:
-            reader = PdfReader(file)
-            # If no specific pages are provided, process all pages
-            if not pages:
-                pages = list(range(len(reader.pages)))
+        # Open the PDF document
+        doc = fitz.open(pdf_path)
+        # If no specific pages are provided, process all pages
+        if not pages:
+            pages = list(range(len(doc)))
 
-            # Loop through each page
-            for page_num in pages:
-                page = reader.pages[page_num]
-                # Extract text from the page
-                text = page.extract_text()
-                cleaned_text = text  # text.replace("", "")
+        # Loop through each page
+        for page_num in pages:
+            # Extract text from the page
+            text = doc[page_num].get_text('text', sort=True)
 
-                # Construct the output file path
-                output_file_path = os.path.join(output_folder, f'pag_{page_num+1}.txt')
-                # Write the extracted text to the output file
-                with open(output_file_path, 'w') as output_file:
-                    output_file.write(cleaned_text)
-                print(f'Text from pag {page_num+1} extracted and saved to {output_file_path}')
+            # Construct the output file path
+            output_file_path = os.path.join(output_folder, f'pag_{page_num+1}.txt')
+            # Write the extracted text to the output file
+            with open(output_file_path, 'w', encoding='utf-8') as output_file:
+                output_file.write(text)
+            print(f'Text from pag {page_num+1} extracted and saved to {output_file_path}')
     except Exception as e:
         print(f'An error occurred: {e}')
 
 
 # Function to convert pages from a PDF to images
-def pdf_to_images(pdf_path, output_folder, pages):
+def pdf_to_images(pdf_path, output_folder, pages, dpi=300):
     try:
         # Open the PDF document
         doc = fitz.open(pdf_path)
@@ -43,10 +40,11 @@ def pdf_to_images(pdf_path, output_folder, pages):
         # Loop through each page
         for page_num in pages:
             page = doc[page_num]
-            # Convert the page to an image
-            img = page.get_pixmap()
+            # Convert the page to an image. The default 72 dpi is too coarse for
+            # OCR, and the file is numbered like the text one so both paths match
+            img = page.get_pixmap(dpi=dpi)
             # Save the image to the output folder
-            img.save(os.path.join(output_folder, f'pag_{page_num}.png'))
+            img.save(os.path.join(output_folder, f'pag_{page_num+1}.png'))
         print(f'PDF converted to images and saved to {output_folder}')
     except Exception as e:
         print(f'An error occurred: {e}')
@@ -73,6 +71,7 @@ if __name__ == '__main__':
     parser.add_argument('--f', help='PDF file path', type=str, required=True)
     parser.add_argument('--o', help='Output folder', type=str, required=True)
     parser.add_argument('--m', help='Mode (split/photo)', type=str, required=True)
+    parser.add_argument('--dpi', help='Resolution for photo mode, 300 by default', type=int, default=300)
 
     # Parse the command line arguments
     args = parser.parse_args()
@@ -96,4 +95,4 @@ if __name__ == '__main__':
     if args.m == 'split':
         split_pages_from_pdf(args.f, args.o, pages)
     elif args.m == 'photo':
-        pdf_to_images(args.f, args.o, pages)
+        pdf_to_images(args.f, args.o, pages, args.dpi)
