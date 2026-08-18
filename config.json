@@ -25,5 +25,79 @@
             "Standard": 0.000004,
             "WaveNet": 0.000016
         }
+    },
+    "EdgeTTS": {
+        "voice": "en-US-AriaNeural",
+        "rate": "+0%",
+        "volume": "+0%",
+        "pitch": "+0Hz",
+        "max_bytes": 5000,
+        "audio_format": "mp3"
+    },
+    "MacTTS": {
+        "voice": null,
+        "rate": null,
+        "data_format": "LEI16@22050",
+        "max_bytes": 5000,
+        "audio_format": "wav"
+    },
+    "OllamaCleanup": {
+        "host": "http://localhost:11434",
+        "model": "qwen3.8:27b-mlx",
+        "chunk_chars": 1800,
+        "temperature": 0,
+        "timeout": 600,
+        "min_word_retention": 0.75,
+        "max_new_words": 0.2,
+        "length_range": [
+            0.75,
+            1.25
+        ]
+    },
+    "OllamaOCR": {
+        "host": "http://localhost:11434",
+        "model": "deepseek-ocr:latest",
+        "prompt": "Transcribe literalmente todo el texto de esta página, respetando los saltos de párrafo. No añadas comentarios, títulos ni explicaciones.",
+        "temperature": 0,
+        "timeout": 600
+    },
+    "Estimacion": {
+        "extraccion_s_por_pagina": 0.05,
+        "render_s_por_pagina": 0.6,
+        "ocr_local_s_por_pagina": 280,
+        "ocr_gcp_s_por_pagina": 2,
+        "vision_usd_por_1000": 1.5,
+        "vision_imagenes_gratis": 1000,
+        "limpieza_caracteres_s": 200000,
+        "llm_caracteres_s": 6.9,
+        "capitulos_s_por_pagina": 3,
+        "tts_edge_caracteres_s": 178,
+        "tts_mac_caracteres_s": 1177,
+        "tts_gcp_caracteres_s": 180,
+        "audio_caracteres_s": 15.5,
+        "figuras_s_por_pagina": 25,
+        "ocr_mac_s_por_pagina": 4,
+        "llm_gemini_caracteres_s": 578,
+        "figuras_gemini_s_por_pagina": 6
+    },
+    "Figuras": {
+        "model_vision": "qwen3.8:27b-mlx",
+        "min_lado": 80,
+        "timeout": 600
+    },
+    "GoogleLLM": {
+        "location": "global",
+        "max_output_tokens": 16384,
+        "models": [
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-2.5-pro"
+        ],
+        "usd_por_1000_car": {
+            "gemini-2.5-flash": 0.0007,
+            "gemini-2.5-flash-lite": 0.000125,
+            "gemini-2.5-pro": 0.0028
+        },
+        "usd_por_imagen": 0.0005
     }
 }

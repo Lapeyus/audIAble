@@ -1,0 +1,32 @@
+# Dependencies for the whole pipeline. Install everything with:
+#   pip install -r requirements.txt
+# Every script is standalone, so you can also install only what you need.
+
+# app.py: the Streamlit interface that drives the whole pipeline
+streamlit>=1.30.0
+
+# pre-pdf.py: split a PDF into text files or page images, and PDF export in app.py
+PyMuPDF>=1.23.0
+
+# pre-cleanup.py and resumen.py: HTML clean-up and sentence tokenization
+beautifulsoup4>=4.12.0
+nltk>=3.8.0
+
+# pro-gcp-ocr.py: OCR through Google Cloud Vision, and the free tier counter
+google-cloud-vision>=3.4.0
+google-cloud-monitoring>=2.16.0
+google-genai>=1.0.0
+
+# pro-gcp-tts.py: Google Cloud Text-to-Speech (needs credentials.json)
+google-cloud-texttospeech>=2.14.0
+
+# pro-edge-tts.py and demo-voices.py: Microsoft Edge TTS (free, no credentials)
+edge-tts>=6.1.0
+
+# pre-ollama.py, pre-capitulos.py and pro-ollama-ocr.py talk to a local Ollama
+# server over plain HTTP, so they need no package at all. Install Ollama from
+# https://ollama.com and pull a model, for example: ollama pull qwen3.5:9b-mlx
+
+# pro-mac-tts.py uses the built-in macOS "say" command, no package required.
+# nltk also needs its tokenizer data the first time:
+#   python3 -c "import nltk; nltk.download('punkt')"

@@ -161,3 +161,12 @@ cython_debug/
 
 credentials.json
 credentials.json
+
+# Generated audio demos (demo-voices.py)
+demos/
+
+# Working folder of the Streamlit interface
+trabajo/
+
+# Libros de prueba: no se versionan
+vientosAlisios.txt.pdf
