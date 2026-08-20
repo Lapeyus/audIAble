@@ -53,13 +53,16 @@ def ejecutar(comando, registro, titulo, barra=None, total=0, patron=None):
         # mide el ritmo real y se proyecta cuánto falta de esta etapa
         if barra is not None and patron and re.search(patron, linea):
             hechos += 1
-            if total:
+            if total and hechos < total:
                 transcurrido = time.time() - inicio
-                restante = transcurrido / hechos * max(total - hechos, 0)
+                restante = transcurrido / hechos * (total - hechos)
                 # el total es aproximado (p. ej. las partes de audio dependen del
                 # troceado), así que la barra no se llena hasta acabar de verdad
                 barra.progress(min(hechos / total, 0.95),
                                text=f'{titulo}: {hechos} de ~{total} · quedan ~{estimacion.formatear_duracion(restante)} de esta etapa')
+            elif total:
+                barra.progress(0.95,
+                               text=f'{titulo}: {hechos} elemento(s) · el total estimado (~{total}) se quedó corto, sigue avanzando')
             else:
                 barra.progress(0.0, text=f'{titulo}: {hechos} elemento(s) procesados')
     proceso.wait()
@@ -256,6 +259,49 @@ def exportar_pdf(texto, destino):
     return destino
 
 
+# Function to build the enriched PDF: each page shows the original page image
+# with the cleaned text laid invisibly on top, so the book looks like the
+# scanned original but can be searched, selected and copied
+def exportar_pdf_enriquecido(paginas_txt, destino, origen_pdf=None, carpeta_img=None, dpi_img=300):
+    import fitz
+    documento = fitz.open()
+    original = fitz.open(str(origen_pdf)) if origen_pdf else None
+    generadas = 0
+    for ruta in paginas_txt:
+        numeros = re.findall(r'\d+', ruta.stem)
+        numero = int(numeros[-1]) if numeros else 0
+        texto = ruta.read_text(encoding='utf-8')
+
+        imagen = carpeta_img / f'{ruta.stem}.png' if carpeta_img else None
+        if imagen and imagen.exists():
+            pix = fitz.Pixmap(str(imagen))
+            ancho, alto = pix.width * 72 / dpi_img, pix.height * 72 / dpi_img
+            pagina = documento.new_page(width=ancho, height=alto)
+            pagina.insert_image(pagina.rect, pixmap=pix)
+        elif original and 0 < numero <= len(original):
+            pix = original[numero - 1].get_pixmap(dpi=150)
+            ancho, alto = original[numero - 1].rect.width, original[numero - 1].rect.height
+            pagina = documento.new_page(width=ancho, height=alto)
+            pagina.insert_image(pagina.rect, pixmap=pix)
+        else:
+            continue
+
+        # texto invisible (render_mode 3) encogido hasta que quepa en la página
+        caja = fitz.Rect(2, 2, pagina.rect.width - 2, pagina.rect.height - 2)
+        cuerpo = 9.0
+        while cuerpo > 3 and pagina.insert_textbox(caja, texto, fontsize=cuerpo, fontname='helv',
+                                                   render_mode=3, align=0) < 0:
+            cuerpo -= 1
+        generadas += 1
+    if original:
+        original.close()
+    if not generadas:
+        return None
+    documento.save(destino)
+    documento.close()
+    return destino
+
+
 # Function to join audio parts into a single file per division
 def unir_audios(rutas, destino):
     if destino.suffix == '.wav':
@@ -289,7 +335,7 @@ with columna_a:
 with columna_b:
     ruta_entrada = st.text_input(
         'Ruta del archivo' if tipo_entrada == 'Archivo único' else 'Ruta de la carpeta',
-        value=str(RAIZ / 'vientosAlisios.txt.pdf') if tipo_entrada == 'Archivo único' else str(RAIZ),
+        value='' if tipo_entrada == 'Archivo único' else str(RAIZ),
         help='PDF o TXT. Un TXT se entiende como texto ya extraído, con OCR hecho o sin él.'
     )
     subido = st.file_uploader('…o sube un archivo', type=['pdf', 'txt'], key='subida')
@@ -385,9 +431,16 @@ if usa_llm:
     st.caption('Cada trozo corregido se valida contra el original: si el modelo inventa texto, se descarta y se conserva el trozo original.')
 
 st.header('4. Guardar el texto limpio')
-columna_a, columna_b = st.columns(2)
+columna_a, columna_b, columna_c = st.columns(3)
 guardar_txt = columna_a.checkbox('TXT', value=True)
-guardar_pdf = columna_b.checkbox('PDF', value=False)
+guardar_pdf = columna_b.checkbox('PDF solo texto', value=False,
+                                 help='El texto limpio maquetado en un PDF nuevo.')
+guardar_pdf_rico = columna_c.checkbox('PDF enriquecido', value=False,
+                                      help='Las páginas originales como imagen con el texto limpio '
+                                           'superpuesto en una capa invisible: se ve el libro tal cual, '
+                                           'pero se puede buscar, seleccionar y copiar. Necesita un PDF de entrada.')
+if guardar_pdf_rico and entradas and not hay_pdf:
+    st.warning('El PDF enriquecido necesita un PDF de entrada (las páginas originales); con un TXT no hay imagen que superponer.')
 
 # ---------------------------------------------------------------- voz
 
@@ -453,7 +506,7 @@ if generar_audio:
     )
     por_divisiones = formato_salida.startswith('Un archivo por')
 
-if not generar_audio and not (guardar_txt or guardar_pdf):
+if not generar_audio and not (guardar_txt or guardar_pdf or guardar_pdf_rico):
     st.warning('Sin audio y sin TXT ni PDF no se produciría ningún archivo: marca al menos un formato en el paso 4.')
 
 # ---------------------------------------------------------------- ejecución
@@ -520,7 +573,7 @@ def vaciar_salida(carpeta):
 
 faltan_condiciones = (not entradas
                       or (generar_audio and not voz)
-                      or (not generar_audio and not (guardar_txt or guardar_pdf))
+                      or (not generar_audio and not (guardar_txt or guardar_pdf or guardar_pdf_rico))
                       or (usar_ocr and motor_ocr == 'Google Cloud Vision' and not google_ocr_ok)
                       or (generar_audio and motor_tts == 'Google Cloud' and not google_tts_ok))
 if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_condiciones):
@@ -604,14 +657,31 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
                 ejecutar(comando, registro, 'Detección de capítulos')
                 divisiones = json.loads((carpeta_trabajo / 'divisiones.json').read_text(encoding='utf-8'))
 
-            # --- exportación del texto
+            # --- exportación del texto, con el nombre del libro de entrada
             estado.update(label='Guardando el texto limpio')
+            if len(entradas) == 1:
+                nombre_base = entradas[0].stem
+            else:
+                nombre_base = (origen.name if origen and origen.is_dir() else 'libro')
+            nombre_base = re.sub(r'[^\w\-. ]+', '_', nombre_base).strip() or 'libro'
             paginas_txt = sorted((a for a in carpeta_txt.iterdir() if a.suffix == '.txt' and 'cambios' not in a.name), key=orden_natural)
             texto_completo = '\n\n'.join(a.read_text(encoding='utf-8') for a in paginas_txt)
+            exportados = []
             if guardar_txt:
-                (carpeta_trabajo / 'texto_limpio.txt').write_text(texto_completo, encoding='utf-8')
+                destino = carpeta_trabajo / f'{nombre_base}.txt'
+                destino.write_text(texto_completo, encoding='utf-8')
+                exportados.append(destino)
             if guardar_pdf:
-                exportar_pdf(texto_completo, carpeta_trabajo / 'texto_limpio.pdf')
+                exportados.append(exportar_pdf(texto_completo, carpeta_trabajo / f'{nombre_base}.pdf'))
+            if guardar_pdf_rico:
+                pdf_origen = next((e for e in entradas if e.suffix.lower() == '.pdf'), None)
+                carpeta_imagenes = (carpeta_trabajo / 'imagenes') if usar_ocr else None
+                rico = exportar_pdf_enriquecido(paginas_txt, carpeta_trabajo / f'{nombre_base} (enriquecido).pdf',
+                                                origen_pdf=pdf_origen, carpeta_img=carpeta_imagenes, dpi_img=dpi)
+                if rico:
+                    exportados.append(rico)
+                else:
+                    st.warning('No se pudo montar el PDF enriquecido: sin PDF de origen ni imágenes de páginas.')
 
             # --- audio
             entregas = []
@@ -625,7 +695,7 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
                 if motor_tts == 'Google Cloud' and llave_tts:
                     comando += ['--cred', llave_tts]
                 ejecutar(comando, registro, 'Síntesis de voz', barra,
-                         max(1, round(total_caracteres / 4500)), r'characters\)')
+                         max(1, total_paginas, round(total_caracteres / 4500)), r'characters\)')
 
                 extension = 'mp3' if motor_tts == 'Microsoft Edge' else 'wav'
                 # se descarta el audio que una corrida anterior pudiera haber generado
@@ -640,7 +710,7 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
                             seguro = re.sub(r'[^\w\-]+', '_', division['titulo']).strip('_') or 'parte'
                             entregas.append(unir_audios(trozos, carpeta_trabajo / f'{seguro}.{extension}'))
                 if not entregas:
-                    entregas = [unir_audios(partes, carpeta_trabajo / f'audiolibro.{extension}')] if partes else []
+                    entregas = [unir_audios(partes, carpeta_trabajo / f'{nombre_base}.{extension}')] if partes else []
 
             estado.update(label='Listo', state='complete')
 
@@ -649,10 +719,8 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
             st.write(f'**{entrega.name}**')
             st.audio(str(entrega))
             st.download_button(f'Descargar {entrega.name}', entrega.read_bytes(), entrega.name, key=str(entrega))
-        for extra in ['texto_limpio.txt', 'texto_limpio.pdf']:
-            ruta = carpeta_trabajo / extra
-            if ruta.exists():
-                st.download_button(f'Descargar {extra}', ruta.read_bytes(), extra, key=extra)
+        for ruta in exportados:
+            st.download_button(f'Descargar {ruta.name}', ruta.read_bytes(), ruta.name, key=str(ruta))
         st.info(f'Todos los archivos intermedios están en {carpeta_trabajo}')
 
     except Exception as error:

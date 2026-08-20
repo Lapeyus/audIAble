@@ -117,6 +117,9 @@ python3 pasos/pro-edge-tts.py --f cap1/ocr/ --o cap1/audio
 python3 pasos/pro-mac-tts.py  --f cap1/ocr/ --o cap1/audio
 ```
 
+### Saltos de línea y pausas
+La limpieza distingue dos clases de cambio de línea, con una puerta previa: **si el renglón siguiente empieza en minúscula, nunca hay corte** — la frase continúa abajo y se une, incluso si la línea termina en un punto (ese punto suele ser el guion de corte de una palabra partida que el OCR leyó mal, y se retira al unir). Solo cuando el siguiente renglón arranca en mayúscula, cifra, apertura o raya de diálogo se evalúa el corte: una línea ya rematada conserva su salto, y una con forma de título, pie o atribución (corta, con palabra clave de encabezado o en versales, sin terminar en palabra de enlace) se conserva y se remata con punto, para que el TTS haga la pausa: `DÍA 42⏎«…libertad».⏎William Wallace (Braveheart)` queda como `DÍA 42.` / `«…libertad».` / `William Wallace (Braveheart).` en párrafos propios. Las abreviaturas se expanden antes, para que un `Dr.` a fin de línea no se confunda con un fin de oración
+
 El pipeline completo, con corrección por LLM y división en capítulos:
 ```bash
 python3 pasos/pre-pdf.py --f book.pdf --o ./cap1 --m split --p 1-58
@@ -143,10 +146,10 @@ Los siete pasos de la página son, en orden:
 1. **Entrada**: un archivo suelto (PDF o TXT) o una carpeta completa, por ruta o arrastrando el archivo. Un TXT se entiende como texto ya extraído. Aquí se elige también el **idioma del libro**, que guía todo lo que se genera después: las descripciones de figuras y tablas salen en ese idioma, las instrucciones del corrector LLM lo mencionan, y el selector de voces del paso 5 se filtra con él, de modo que descripción y narrador siempre casan.
 2. **OCR**: opcional. Tres motores: `macOS (Vision)` (el del sistema, el mismo de Vista Previa: gratis, local, ~4 s por página, el recomendado en Mac), `Ollama local` (modelos de visión, lento) o `Google Cloud Vision` (gratis hasta 1.000 páginas al mes, con ADC o llave JSON). Resolución de render configurable.
 3. **Limpieza**: ninguna, solo reglas deterministas, solo corrección con el LLM local (el texto extraído va directo al modelo, sin reglas previas), o reglas más corrección con LLM.
-4. **Texto limpio**: se guarda en TXT, en PDF, o en ambos.
+4. **Texto limpio**: tres formatos combinables, siempre con el nombre del libro de entrada. `TXT` (el texto plano), `PDF solo texto` (el texto limpio maquetado en un PDF nuevo) y `PDF enriquecido` (las páginas originales como imagen con el texto limpio superpuesto en una capa invisible: el libro se ve tal cual era, pero se puede buscar, seleccionar y copiar — el clásico escaneo con OCR incorporado). El enriquecido necesita un PDF de entrada; en modo OCR usa las imágenes ya renderizadas y, sin OCR, renderiza las páginas del original.
 5. **Voz**: una casilla «Generar audio» decide si el pipeline llega hasta la síntesis. Desmarcada, se detiene tras la limpieza y entrega solo el TXT o PDF del paso 4 (con aviso si no hay ningún formato marcado). Marcada, aparecen el motor de voz y la voz, filtrada por el idioma elegido en el paso 1, con un botón para escuchar una muestra antes de decidir.
 6. **Formato del audio**: un único archivo largo, o un archivo por división lógica (los capítulos y secciones que detecta `pasos/pre-capitulos.py`).
-7. **Ejecutar**: muestra la salida de cada script según avanza y deja los archivos intermedios y finales en la carpeta de trabajo, con reproductores y botones de descarga.
+7. **Ejecutar**: muestra la salida de cada script según avanza y deja los archivos intermedios y finales en la carpeta de trabajo, con reproductores y botones de descarga. Los archivos finales (texto, PDF y audiolibro único) llevan el nombre del archivo de entrada.
 
 ## Voces Siri en macOS
 `say` no puede abrir las voces de Siri: pasarle el nombre (`say -v Simone`) cae en silencio a Samantha, y pasarle el identificador (`say -v com.apple.siri.natural.Simone`) falla con `Open speech channel failed: -244`. `AVSpeechSynthesisVoice` tampoco las expone, así que sustituir `say` por Swift o pyobjc no ayuda. La única vía es la voz de sistema de Contenido Hablado, que `say` sí usa cuando se le llama sin `-v`.

@@ -102,7 +102,9 @@ async def sintetizar_parte(parte_texto, ruta_audio, reintentos=3):
                 volume=settings['volume'],
                 pitch=settings['pitch']
             )
-            await comunicacion.save(str(ruta_parcial))
+            # una descarga estancada no debe congelar el libro entero: si una
+            # parte tarda más de la cuenta, se corta y se reintenta
+            await asyncio.wait_for(comunicacion.save(str(ruta_parcial)), timeout=180)
             if ruta_parcial.stat().st_size == 0:
                 raise RuntimeError('empty audio received')
             ruta_parcial.rename(ruta_audio)
