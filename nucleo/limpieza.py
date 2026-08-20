@@ -51,6 +51,99 @@ SIMBOLOS = {
     'en': {'&': ' and ', '%': ' percent'}
 }
 
+# Words that never end a complete sentence: a line break right after one of
+# them is the wrap of the PDF, not a pause the author wanted
+_CONECTORES = {
+    'de', 'del', 'la', 'el', 'los', 'las', 'un', 'una', 'unos', 'unas', 'y', 'e', 'o', 'u',
+    'a', 'al', 'en', 'con', 'sin', 'por', 'para', 'que', 'se', 'su', 'sus', 'mi', 'tu', 'lo',
+    'ni', 'como', 'más', 'muy', 'les', 'nos', 'me', 'te', 'es', 'era', 'fue', 'ha', 'han',
+    'the', 'of', 'and', 'to', 'in', 'on', 'at', 'with', 'for', 'from', 'by', 'or', 'an',
+    'is', 'are', 'was', 'were', 'has', 'have', 'had', 'be', 'been', 'their', 'its', 'this',
+    'that', 'these', 'those', 'as', 'but', 'not', 'his', 'her', 'my', 'your', 'our', 'so'
+}
+
+_TERMINALES = ('.', '!', '?', '…', ':', ';', '»', '"')
+
+# Lines that open with these words are headings no matter their length
+_TITULO = re.compile(
+    r'^(\d+(\.\d+)*\s+\S|(cap[íi]tulo|chapter|parte|part|libro|book|secci[óo]n|section|'
+    r'd[íi]a|day|figura|figure|tabla|table|pr[óo]logo|ep[íi]logo|prologue|epilogue|'
+    r'[íi]ndice|index|contents|ap[ée]ndice|appendix|unidad|unit|lecci[óo]n|lesson|'
+    r'acto|act|escena|scene)\b)', re.IGNORECASE)
+
+
+# Function to decide whether a piece of text has the shape of a heading, a
+# caption or an attribution: something the listener needs separated by a pause
+def _es_estructural(actual, ancho):
+    palabras = actual.split()
+    if not palabras:
+        return False
+    ultima = re.sub(r'\W+$', '', palabras[-1])
+    if ultima.lower() in _CONECTORES:
+        return False
+    # un encabezado con palabra clave o numeración de sección lo es siempre
+    if _TITULO.match(actual):
+        return True
+    # una línea entera en mayúsculas, si no es una fórmula de letras sueltas
+    if actual.isupper():
+        return (len(palabras) <= 8
+                and not any(len(re.sub(r'\W+', '', p)) == 1 for p in palabras)
+                and any(len(p) >= 3 for p in palabras))
+    # una línea corta con forma de atribución: empieza y termina en mayúscula,
+    # cifra o paréntesis ("William Wallace (Braveheart)"), nunca prosa como
+    # "Y sin embargo el viejo", cuya última palabra va en minúscula
+    return ((actual[:1].isupper() or actual[:1].isdigit() or actual[:1] in '«"(')
+            and len(actual) < max(24, ancho * 0.6) and len(palabras) <= 6
+            and (ultima[:1].isupper() or ultima[:1].isdigit() or actual.endswith(')')))
+
+
+# Function to keep the line breaks that carry meaning and make sure each kept
+# line ends in a full stop, so the TTS pauses instead of reading everything in
+# one breath. A hard-wrapped line of prose still joins with the next one: only
+# a line with the shape of a heading, a quote or an attribution is preserved
+def puntuar_lineas(texto):
+    resultado = []
+    for parrafo in re.split(r'\n\s*\n', texto):
+        lineas = [linea.strip() for linea in parrafo.split('\n') if linea.strip()]
+        if not lineas:
+            continue
+        if len(lineas) == 1:
+            resultado.append(lineas[0])
+            continue
+
+        ancho = max(len(linea) for linea in lineas)
+        piezas, actual = [], ''
+        for indice, linea in enumerate(lineas):
+            actual = f'{actual} {linea}'.strip() if actual else linea
+            if indice == len(lineas) - 1:
+                piezas.append(actual)
+                break
+            siguiente = lineas[indice + 1]
+
+            # la puerta de la regla: solo si el renglón siguiente arranca en
+            # mayúscula (o cifra, apertura o raya de diálogo) puede haber corte.
+            # Si arranca en minúscula la frase continúa abajo, aunque la línea
+            # termine en un punto: ese punto suele ser el guion de corte de una
+            # palabra partida que el OCR leyó mal, y se retira al unir
+            if not (siguiente[:1].isupper() or siguiente[:1].isdigit() or siguiente[:1] in '«"¿¡(—'):
+                if re.search(r'\w\.$', actual) and not actual.endswith(('...', '….')):
+                    actual = actual[:-1]
+                continue
+
+            if actual.endswith(_TERMINALES):
+                # la oración ya está rematada: el cambio de línea se conserva
+                piezas.append(actual)
+                actual = ''
+                continue
+            if actual.endswith((',', '-', '‐', '‑', '–')):
+                continue
+            if _es_estructural(actual, ancho):
+                piezas.append(actual + '.')
+                actual = ''
+        resultado.append('\n\n'.join(piezas))
+    return '\n\n'.join(resultado)
+
+
 # Function to strip HTML and normalize the characters of the text layer
 def normalizar_caracteres(texto):
     # bs4 se importa aquí para que los scripts que no limpian HTML no lo requieran
@@ -83,7 +176,7 @@ def arreglar_guiones(texto):
     # and "fa- llones" look the same to it
     texto = re.sub(r'(?<=\s)[-‐‑–—]\s*([^-‐‑–—\n]{1,120}?)\s*[-‐‑–—](?=[\s.,;:!?])', r', \1,', texto)
     texto = re.sub(r'(\w)[-‐‑]\s+(\w)', r'\1\2', texto)
-    texto = re.sub(r'(?m)^\s*[-‐‑–—]\s*', '', texto)
+    texto = re.sub(r'(?m)^[ \t]*[-‐‑–—][ \t]*', '', texto)
     texto = re.sub(r'(\w)\s*[-‐‑–—](?=\s*[.,;:!?])', r'\1', texto)
     texto = re.sub(r'(?<=\s)[-‐‑–—]\s*(?=\w)', ', ', texto)
     texto = re.sub(r'(\w)[–—](?=\s)', r'\1,', texto)
@@ -123,14 +216,19 @@ def normalizar_espacios(texto):
 # or from a correction, and read out loud it becomes minutes of one word
 def colapsar_repeticiones(texto, maximo=3):
     texto = re.sub(r'(?i)(\b\S{2,}\b)(\s+\1\b){' + str(maximo) + r',}', r'\1', texto)
-    frases, previa, salida = re.split(r'(?<=[.!?…])\s+', texto), None, []
-    for frase in frases:
-        clave = re.sub(r'\W+', '', frase.lower())
-        if clave and clave == previa:
-            continue
-        previa = clave
-        salida.append(frase)
-    return ' '.join(salida)
+    # la deduplicación de frases va párrafo a párrafo, para no aplastar los
+    # saltos de línea que puntuar_lineas decidió conservar
+    parrafos = []
+    for parrafo in texto.split('\n\n'):
+        frases, previa, salida = re.split(r'(?<=[.!?…])\s+', parrafo), None, []
+        for frase in frases:
+            clave = re.sub(r'\W+', '', frase.lower())
+            if clave and clave == previa:
+                continue
+            previa = clave
+            salida.append(frase)
+        parrafos.append(' '.join(salida))
+    return '\n\n'.join(parrafos)
 
 
 # Function to remove the whitespace a TTS engine turns into pauses. Inside a
@@ -152,10 +250,11 @@ def normalizar_pausas(texto):
 def limpiar_texto(texto, idioma='es'):
     texto = normalizar_caracteres(texto)
     texto = quitar_numeros_pagina(texto)
+    texto = expandir_abreviaturas(texto, idioma)
+    texto = puntuar_lineas(texto)
     texto = desenvolver_lineas(texto)
     texto = arreglar_guiones(texto)
     texto = quitar_markdown(texto)
-    texto = expandir_abreviaturas(texto, idioma)
     texto = normalizar_espacios(texto)
     texto = colapsar_repeticiones(texto)
     return normalizar_pausas(texto) + '\n'
