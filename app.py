@@ -264,6 +264,20 @@ def exportar_pdf(texto, destino):
 # scanned original but can be searched, selected and copied
 def exportar_pdf_enriquecido(paginas_txt, destino, origen_pdf=None, carpeta_img=None, dpi_img=300):
     import fitz
+
+    # Function to turn a page pixmap into a JPEG at about 150 dpi. The render
+    # comes at OCR resolution as raw PNG, which inflates the PDF to gigabytes;
+    # a compressed page is enough to read on screen and keeps the file small
+    def comprimir_pagina(pix, dpi_origen):
+        if pix.alpha:
+            pix = fitz.Pixmap(pix, 0)
+        if pix.n != 3:
+            pix = fitz.Pixmap(fitz.csRGB, pix)
+        while dpi_origen > 200:
+            pix.shrink(1)
+            dpi_origen /= 2
+        return pix.tobytes('jpeg', jpg_quality=70)
+
     documento = fitz.open()
     original = fitz.open(str(origen_pdf)) if origen_pdf else None
     generadas = 0
@@ -275,14 +289,15 @@ def exportar_pdf_enriquecido(paginas_txt, destino, origen_pdf=None, carpeta_img=
         imagen = carpeta_img / f'{ruta.stem}.png' if carpeta_img else None
         if imagen and imagen.exists():
             pix = fitz.Pixmap(str(imagen))
+            # el tamaño de página se calcula antes de encoger la imagen
             ancho, alto = pix.width * 72 / dpi_img, pix.height * 72 / dpi_img
             pagina = documento.new_page(width=ancho, height=alto)
-            pagina.insert_image(pagina.rect, pixmap=pix)
+            pagina.insert_image(pagina.rect, stream=comprimir_pagina(pix, dpi_img))
         elif original and 0 < numero <= len(original):
             pix = original[numero - 1].get_pixmap(dpi=150)
             ancho, alto = original[numero - 1].rect.width, original[numero - 1].rect.height
             pagina = documento.new_page(width=ancho, height=alto)
-            pagina.insert_image(pagina.rect, pixmap=pix)
+            pagina.insert_image(pagina.rect, stream=comprimir_pagina(pix, 150))
         else:
             continue
 
@@ -297,7 +312,7 @@ def exportar_pdf_enriquecido(paginas_txt, destino, origen_pdf=None, carpeta_img=
         original.close()
     if not generadas:
         return None
-    documento.save(destino)
+    documento.save(destino, garbage=4, deflate=True)
     documento.close()
     return destino
 
