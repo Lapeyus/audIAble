@@ -12,7 +12,8 @@ guard argumentos.count >= 3 else {
 }
 let idiomas = argumentos[1].split(separator: ",").map(String.init)
 
-for ruta in argumentos.dropFirst(2) {
+let salidaJSON = argumentos.contains("--json")
+for ruta in argumentos.dropFirst(2).filter({ $0 != "--json" }) {
     print("###FILE:\(ruta)")
     guard let imagen = NSImage(contentsOfFile: ruta),
           let cg = imagen.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
@@ -21,15 +22,27 @@ for ruta in argumentos.dropFirst(2) {
     }
     let peticion = VNRecognizeTextRequest()
     peticion.recognitionLevel = .accurate
+    peticion.minimumTextHeight = 0.0
     peticion.recognitionLanguages = idiomas
     peticion.usesLanguageCorrection = true
     let manejador = VNImageRequestHandler(cgImage: cg, options: [:])
     do {
         try manejador.perform([peticion])
+        var lineas: [[String: Any]] = []
         for observacion in peticion.results ?? [] {
             if let candidato = observacion.topCandidates(1).first {
-                print(candidato.string)
+                if salidaJSON {
+                    let caja = observacion.boundingBox
+                    lineas.append(["texto": candidato.string, "confianza": candidato.confidence,
+                                   "caja": [caja.origin.x, caja.origin.y, caja.width, caja.height]])
+                } else {
+                    print(candidato.string)
+                }
             }
+        }
+        if salidaJSON {
+            let datos = try JSONSerialization.data(withJSONObject: lineas, options: [.sortedKeys])
+            print(String(data: datos, encoding: .utf8)!)
         }
     } catch {
         print("###ERROR:\(error.localizedDescription)")

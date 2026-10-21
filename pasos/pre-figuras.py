@@ -203,7 +203,7 @@ def describir_figuras_de_pagina(ruta_imagen):
 def procesar_imagenes():
     folder_img = Path(args.folder_img)
     folder_output = Path(args.folder_output)
-    imagenes = sorted((i for i in folder_img.iterdir() if i.suffix.lower() in ('.png', '.jpg', '.jpeg')),
+    imagenes = sorted((i for i in folder_img.iterdir() if i.suffix.lower() in ('.png', '.jpg', '.jpeg') and not i.name.startswith('.')),
                       key=lambda r: (int(re.findall(r'\d+', r.stem)[-1]) if re.findall(r'\d+', r.stem) else 0, r.stem))
     descritas = 0
     for imagen in imagenes:

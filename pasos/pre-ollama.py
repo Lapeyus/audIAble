@@ -16,7 +16,7 @@ sys.path.insert(0, str(RAIZ))
 
 from nucleo.limpieza import colapsar_repeticiones, normalizar_pausas
 
-from nucleo import gemini, ollama_local
+from nucleo import gemini, ollama_local, agentes
 
 
 # Load JSON configurations
@@ -46,17 +46,57 @@ Devuelve SOLO el texto corregido, sin introducción ni explicaciones.
 TEXTO:
 """
 
+# With the page image in front, the agent corrects against the source instead
+# of guessing: it is a transcription, with the OCR as a draft
+INSTRUCCIONES_IMAGEN = """Esta imagen es una página de un libro en {idioma}, y debajo va el texto que un OCR leyó de ella, con errores.
+Devuelve la transcripción fiel de la página, usando el OCR como borrador y la imagen como fuente de verdad:
+- corrige las letras mal leídas, las palabras partidas o pegadas y las tildes
+- quita lo que el OCR inventó y no está en la página (restos de otra página, finales de línea repetidos, números sueltos)
+- separa en párrafos donde la página los tenga; une las líneas de un mismo párrafo
+- si una zona es ilegible en la imagen, escribe [ilegible] en su lugar; no la inventes
+PROHIBIDO cambiar el estilo o el vocabulario, resumir, comentar, traducir o usar markdown.
+Devuelve SOLO el texto, sin introducción ni explicaciones.
+
+OCR:
+"""
+
+# With a multi-frame draft the OCR saw several photos of the page: text that a
+# hand covers in this image may be right in the draft, and must not be dropped
+INSTRUCCIONES_MULTIPLE = """Esta imagen es una página de un libro en {idioma}, y debajo va un borrador de su texto que un OCR armó leyendo VARIAS fotos de la misma página: donde en esta foto una mano o un reflejo tapa el texto, el borrador puede haberlo leído bien en otra foto.
+Devuelve la transcripción fiel de la página:
+- corrige las letras mal leídas, las palabras partidas o pegadas y las tildes, comparando con la imagen donde se vea
+- donde la imagen esté tapada u oculta y el borrador traiga texto coherente con lo que lo rodea, CONSÉRVALO tal cual: no lo cambies por [ilegible]
+- quita lo que no es de la página (restos de la página de enfrente, renglones repetidos, números sueltos)
+- separa en párrafos donde la página los tenga; une las líneas de un mismo párrafo
+- escribe [ilegible] solo donde ni la imagen ni el borrador permitan leer el texto
+PROHIBIDO cambiar el estilo o el vocabulario, resumir, comentar, traducir o usar markdown.
+Devuelve SOLO el texto, sin introducción ni explicaciones.
+
+BORRADOR:
+"""
+
 # Command line arguments setup
-parser = argparse.ArgumentParser(description='Validate and repair OCR damage in the extracted text with a local Ollama model.')
+parser = argparse.ArgumentParser(description='Validate and repair OCR damage in the extracted text with a local Ollama model, '
+                                             'a Gemini model, or one of the agent CLIs installed on this machine '
+                                             f'({", ".join(agentes.AGENTES)}), which can also look at the page image.')
 parser.add_argument('--f', dest='folder_input', help='Folder with the cleaned text files to review.')
 parser.add_argument('--o', dest='folder_output', help='Folder to write the reviewed files. Overwrites in place if omitted.')
 parser.add_argument('--m', dest='model', help='Ollama model to use, overrides the one in config.json.')
 parser.add_argument('--dryrun', dest='dryrun', action='store_true', help='Report the chunks that would be sent without calling the model.')
 parser.add_argument('--check', dest='check', action='store_true', help='Check that the Ollama server answers and the model is installed, then exit.')
 parser.add_argument('--idioma', dest='idioma', default='es', choices=sorted(NOMBRES_IDIOMA), help='Language of the book, used in the correction instructions.')
+parser.add_argument('--borrador-multiple', dest='borrador_multiple', action='store_true',
+                    help='The text comes from the multi-frame OCR: tell the agent the draft may be right where the image is covered.')
+parser.add_argument('--img', dest='carpeta_img', default=None,
+                    help='Folder with the page images (pag_N.png). With an agent CLI, each page is corrected looking at its image.')
 args = parser.parse_args()
 
 modelo = args.model or settings['model']
+if agentes.es_agente(modelo):
+    # los agentes transcriben mirando la página: quitan lo que el OCR inventó y
+    # marcan lo ilegible, así que los guardarraíles se relajan un poco
+    settings = dict(settings, **config.get('Agentes', {}).get('umbrales', {}))
+    settings['chunk_chars'] = 100000
 
 # Function to talk to the Ollama HTTP API
 def pedir_a_ollama(ruta, cuerpo=None, timeout=30):
@@ -71,6 +111,10 @@ def pedir_a_ollama(ruta, cuerpo=None, timeout=30):
 # candidate for this task is picked instead of failing
 def comprobar_servidor():
     global modelo
+    if agentes.es_agente(modelo):
+        if modelo not in agentes.disponibles():
+            sys.exit(f'La CLI de {modelo} no está en el PATH')
+        return [modelo]
     if gemini.es_modelo_google(modelo):
         return [modelo]
     try:
@@ -159,9 +203,19 @@ def limpiar_respuesta(respuesta):
     return normalizar_pausas(colapsar_repeticiones(respuesta))
 
 # Function to send one chunk to the model and get the corrected text back
-def corregir_trozo(trozo, reintentos=2):
+def corregir_trozo(trozo, reintentos=2, imagen=None):
     for intento in range(1, reintentos + 1):
         try:
+            if agentes.es_agente(modelo):
+                ajustes = config.get('Agentes', {})
+                if imagen is not None:
+                    plantilla = INSTRUCCIONES_MULTIPLE if args.borrador_multiple else INSTRUCCIONES_IMAGEN
+                    prompt = plantilla.format(idioma=NOMBRES_IDIOMA[args.idioma]) + trozo
+                else:
+                    prompt = INSTRUCCIONES.format(idioma=NOMBRES_IDIOMA[args.idioma]) + trozo
+                return limpiar_respuesta(agentes.generar(modelo, prompt, [imagen] if imagen is not None else (),
+                                                         modelo=ajustes.get('modelos', {}).get(modelo),
+                                                         timeout=ajustes.get('timeout', 300)))
             if gemini.es_modelo_google(modelo):
                 return limpiar_respuesta(gemini.generar(
                     modelo, INSTRUCCIONES.format(idioma=NOMBRES_IDIOMA[args.idioma]) + trozo,
@@ -180,6 +234,62 @@ def corregir_trozo(trozo, reintentos=2):
             print(f'    reintento {intento}: {error}', flush=True)
             time.sleep(2 * intento)
 
+# Function to tell whether the agent gave up on a page it could have read: the
+# answer carries many more [ilegible] marks than the OCR had doubtful lines.
+# The agent is not deterministic, and on the same draft it sometimes declares a
+# whole page illegible (20 marks) that another run transcribes in full. The
+# multi-frame OCR leaves the number of doubtful lines of each page in its
+# fusion report; without it, the OCR reading itself is the reference
+def ilegibles_excesivos(archivo, trozo, corregido):
+    marcas = len(re.findall(r'\[ilegible\]', corregido, re.I))
+    if marcas <= 4:
+        return False, marcas, None
+    informe = Path(args.folder_input) / 'informes' / f'{archivo.stem}.fusion.json'
+    dudosos = None
+    if informe.exists():
+        try:
+            dudosos = json.loads(informe.read_text(encoding='utf-8')).get('dudosos_fusion')
+        except (ValueError, OSError):
+            dudosos = None
+    if dudosos is None:
+        # sin informe: el borrador ya traía sus propios huecos, y el agente no
+        # debería añadir muchos más que los que el OCR dejó en blanco
+        dudosos = len(re.findall(r'\[ilegible\]', trozo, re.I))
+    return marcas > max(4, 2 * dudosos + 2), marcas, dudosos
+
+
+# Function to keep the agent's reading (its corrections and paragraphs) and fill
+# only the spans it marked [ilegible] with the OCR draft's words. The two texts
+# are aligned word by word; where the agent's side of a difference carries an
+# [ilegible], the draft's side goes in its place; a bare [ilegible] the draft
+# has no words for is dropped. Paragraph breaks of the agent survive as tokens
+def injertar_borrador(borrador, corregido):
+    marca = re.compile(r'\[ilegible\]', re.I)
+    palabras_borrador = borrador.split()
+    tokens = []
+    for parrafo in re.split(r'\n\s*\n', corregido.strip()):
+        if tokens:
+            tokens.append('\u00b6')
+        tokens += parrafo.split()
+    clave = lambda t: re.sub(r'[^\wáéíóúüñ]', '', t.lower())
+    emparejador = difflib.SequenceMatcher(None, [clave(w) for w in palabras_borrador], [clave(t) for t in tokens], autojunk=False)
+    salida, injertos = [], 0
+    for operacion, i1, i2, j1, j2 in emparejador.get_opcodes():
+        bloque = tokens[j1:j2]
+        if operacion == 'equal' or not any(marca.search(t) for t in bloque):
+            salida += bloque
+            continue
+        # el agente marcó ilegible aquí: entra lo que el OCR leyó en ese tramo
+        sustitutos = palabras_borrador[i1:i2]
+        intactos = [t for t in bloque if not marca.search(t) and t != '\u00b6']
+        salida += sustitutos if sustitutos else intactos
+        if '\u00b6' in bloque:
+            salida.append('\u00b6')
+        injertos += 1
+    texto = ' '.join(salida).replace(' \u00b6 ', '\n\n').replace('\u00b6', '\n\n')
+    return re.sub(r'[ \t]+', ' ', texto).strip(), injertos
+
+
 # Function to write a readable report of what the model changed
 def escribir_informe(ruta_informe, original, corregido, incidencias):
     frases = lambda t: [f for f in re.split(r'(?<=[.!?…])\s+', t.replace('\n\n', '\n')) if f.strip()]
@@ -194,7 +304,7 @@ def escribir_informe(ruta_informe, original, corregido, incidencias):
 
 # Function to tell a page of the book from a report left by a previous run
 def es_pagina(ruta):
-    return ruta.suffix == '.txt' and not ruta.name.endswith('.cambios.txt')
+    return ruta.suffix == '.txt' and not ruta.name.endswith('.cambios.txt') and not ruta.name.startswith('.')
 
 
 # Function to review every text file in the input folder
@@ -222,9 +332,37 @@ def revisar_directorio():
 
         inicio = time.time()
         resultado, incidencias = [], []
+        imagen = None
+        if args.carpeta_img and agentes.es_agente(modelo):
+            candidata = Path(args.carpeta_img) / f'{archivo.stem}.png'
+            imagen = candidata if candidata.exists() else None
         for i, trozo in enumerate(trozos, 1):
-            corregido = corregir_trozo(trozo)
+            corregido = corregir_trozo(trozo, imagen=imagen)
+            # una página declarada ilegible entera se vuelve a pedir; si el agente
+            # insiste, se conserva el borrador, que leía la página
+            injertos = 0
+            if imagen is not None:
+                excesivo, marcas, dudosos = ilegibles_excesivos(archivo, trozo, corregido)
+                if excesivo:
+                    print(f'  trozo {i}/{len(trozos)}: {marcas} [ilegible] con {dudosos} renglones dudosos en el OCR; se repite la lectura', flush=True)
+                    segunda = corregir_trozo(trozo, imagen=imagen)
+                    excesivo, marcas, _ = ilegibles_excesivos(archivo, trozo, segunda)
+                    corregido = segunda
+                    if excesivo:
+                        # el agente insiste: se conservan sus correcciones y párrafos, y solo
+                        # los tramos que marcó ilegible se rellenan con el borrador del OCR
+                        corregido, injertos = injertar_borrador(trozo, segunda)
+                        restantes = len(re.findall(r'\[ilegible\]', corregido, re.I))
+                        print(f'  trozo {i}/{len(trozos)}: {marcas} [ilegible] también en la segunda lectura; '
+                              f'se injerta el borrador en {injertos} tramo(s), quedan {restantes}', flush=True)
             valido, motivo = validar(trozo, corregido)
+            if valido and injertos:
+                motivo += f'; {injertos} tramo(s) ilegibles rellenados con el OCR'
+            # con la imagen delante y un OCR casi vacío (una portadilla, un título, una
+            # página que el OCR apenas leyó) el agente devuelve más texto del que había,
+            # y eso es lo que se busca: el guardarraíl de longitud no aplica
+            if imagen is not None and not valido and len(trozo) < 400 and corregido.strip() and motivo.startswith('longitud'):
+                valido, motivo = True, f'{motivo}; se acepta porque el OCR era corto y el agente leyó la imagen'
             if valido:
                 aceptados += 1
                 resultado.append(corregido)

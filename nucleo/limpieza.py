@@ -85,10 +85,15 @@ def _es_estructural(actual, ancho):
     if _TITULO.match(actual):
         return True
     # una línea entera en mayúsculas, si no es una fórmula de letras sueltas
+    # (se permiten nexos de una letra como «Y», «O», «A», «E» o números romanos «I», «V», «X»)
     if actual.isupper():
+        limpias = [re.sub(r'\W+', '', p) for p in palabras]
+        limpias = [p for p in limpias if p]
+        sueltas_no_nexo = [p for p in limpias if len(p) == 1 and p not in {'Y', 'E', 'O', 'U', 'A', 'I', 'V', 'X'}]
         return (len(palabras) <= 8
-                and not any(len(re.sub(r'\W+', '', p)) == 1 for p in palabras)
-                and any(len(p) >= 3 for p in palabras))
+                and not sueltas_no_nexo
+                and sum(len(p) == 1 for p in limpias) <= len(limpias) // 2
+                and any(len(p) >= 3 for p in limpias))
     # una línea corta con forma de atribución: empieza y termina en mayúscula,
     # cifra o paréntesis ("William Wallace (Braveheart)"), nunca prosa como
     # "Y sin embargo el viejo", cuya última palabra va en minúscula
@@ -102,6 +107,9 @@ def _es_estructural(actual, ancho):
 # one breath. A hard-wrapped line of prose still joins with the next one: only
 # a line with the shape of a heading, a quote or an attribution is preserved
 def puntuar_lineas(texto):
+    # une antes las palabras cortadas con guion a final de renglón para que no
+    # queden separadas por espacio cuando se fundan las líneas del párrafo
+    texto = re.sub(r'([A-Za-záéíóúüñÁÉÍÓÚÜÑ])[-‐‑¬][ \t]*\n[ \t]*([a-záéíóúüñ])', r'\1\2', texto)
     resultado = []
     for parrafo in re.split(r'\n\s*\n', texto):
         lineas = [linea.strip() for linea in parrafo.split('\n') if linea.strip()]
@@ -154,15 +162,109 @@ def normalizar_caracteres(texto):
         texto = texto.replace(origen, destino)
     return texto
 
-# Function to drop the page numbers the extractor leaves on their own line
+
+_PALABRA_SECCION = re.compile(
+    r'^(cap[íi]tulo|chapter|parte|part|libro|book|secci[óo]n|section|'
+    r'd[íi]a|day|figura|figure|tabla|table|pr[óo]logo|ep[íi]logo|prologue|epilogue|'
+    r'[íi]ndice|index|contents|ap[ée]ndice|appendix|unidad|unit|lecci[óo]n|lesson|'
+    r'acto|act|escena|scene)\b', re.IGNORECASE)
+
+
+def _es_folio_o_cornisa(linea, en_borde=False):
+    limpia = linea.strip()
+    if not limpia:
+        return False
+    # Número de página aislado o adornado con guiones, corchetes o puntos («- 16 -», «[16]», «XIV»)
+    if re.fullmatch(r'[-–—·•(\[]*\s*(?:\d{1,4}|[IVXLCivxlc]{1,6})\s*[-–—·•)\]]*', limpia):
+        return True
+    if not en_borde:
+        return False
+    # Cornisa de cabecera o pie con folio («16 LA MADRIGUERA», «GUIRNALDAS (BAJO TIERRA) 245»)
+    if len(limpia) <= 55 and not _PALABRA_SECCION.match(limpia):
+        m = re.fullmatch(r'(?:\d{1,4}\s+([A-ZÁÉÍÓÚÜÑ0-9 ()«»"\'.,/-]{3,45})|([A-ZÁÉÍÓÚÜÑ0-9 ()«»"\'.,/-]{3,45})\s+\d{1,4})', limpia)
+        if m:
+            titulo = (m.group(1) or m.group(2)).strip()
+            if (sum(c.isalpha() for c in titulo) >= 3 and titulo == titulo.upper()
+                    and not _PALABRA_SECCION.match(titulo)):
+                return True
+    return False
+
+
+# Function to drop the page numbers (and foliated running headers/footers at page
+# boundaries) that the extractor leaves on their own line
 def quitar_numeros_pagina(texto):
-    lineas = [l for l in texto.split('\n') if not re.fullmatch(r'\s*[\dIVXLCivxlc]{1,6}\s*', l)]
-    return '\n'.join(lineas)
+    lineas = texto.split('\n')
+    no_vacias = [i for i, l in enumerate(lineas) if l.strip()]
+    bordes = set(no_vacias[:2] + no_vacias[-2:]) if len(no_vacias) >= 3 else set(no_vacias)
+    filtradas = [l for i, l in enumerate(lineas) if not _es_folio_o_cornisa(l, en_borde=(i in bordes))]
+    return '\n'.join(filtradas)
+
+
+# Elimina cabeceras y pies de imprenta (título del libro o nombre del autor) que se
+# repiten en los bordes superior o inferior a lo largo de las páginas de un libro,
+# incluso cuando el OCR confunde alguna letra («GUIRNAIDAS» por «GUIRNALDAS»).
+def quitar_encabezados_repetidos(textos):
+    if len(textos) < 4:
+        return textos
+    from difflib import SequenceMatcher
+
+    def clave_cornisa(linea):
+        s = re.sub(r'\d+', '', linea.strip())
+        s = re.sub(r'[\W_]+', ' ', s).strip().lower()
+        return s
+
+    candidatos = []
+    for idx, t in enumerate(textos):
+        lineas = [l.strip() for l in t.split('\n') if l.strip()]
+        if len(lineas) < 2:
+            continue
+        for pos in (0, 1, -2, -1):
+            if abs(pos) > len(lineas) or (pos >= 0 and pos >= len(lineas)):
+                continue
+            l = lineas[pos]
+            c = clave_cornisa(l)
+            if 4 <= len(c) <= 48 and len(c.split()) <= 7 and not _TITULO.match(l):
+                candidatos.append((idx, c))
+
+    grupos = []
+    for idx, c in candidatos:
+        for g in grupos:
+            if SequenceMatcher(None, c, g[0][1]).ratio() >= 0.82:
+                g.append((idx, c))
+                break
+        else:
+            grupos.append([(idx, c)])
+
+    min_repeticiones = max(3, len(textos) // 8)
+    cornisas = []
+    for g in grupos:
+        if len({i for i, _ in g}) >= min_repeticiones:
+            valores = [c for _, c in g]
+            cornisas.append(max(set(valores), key=valores.count))
+    if not cornisas:
+        return textos
+
+    def es_cornisa_repetida(linea):
+        c = clave_cornisa(linea)
+        if not (4 <= len(c) <= 48 and len(c.split()) <= 7) or _TITULO.match(linea.strip()):
+            return False
+        return any(SequenceMatcher(None, c, patron).ratio() >= 0.82 for patron in cornisas)
+
+    limpios = []
+    for t in textos:
+        lineas = t.split('\n')
+        no_vacias = [i for i, l in enumerate(lineas) if l.strip()]
+        if len(no_vacias) >= 2:
+            bordes = set(no_vacias[:2] + no_vacias[-2:])
+            lineas = [l for i, l in enumerate(lineas) if not (i in bordes and es_cornisa_repetida(l))]
+        limpios.append('\n'.join(lineas))
+    return limpios
+
 
 # Function to undo the hard wrapping of the PDF, keeping real paragraphs.
 # Words cut by a hyphen at the end of a line are joined back together
 def desenvolver_lineas(texto):
-    texto = re.sub(r'(\w)[-‐‑]\s*\n\s*(\w)', r'\1\2', texto)
+    texto = re.sub(r'(\w)[-‐‑¬]\s*\n\s*(\w)', r'\1\2', texto)
     texto = re.sub(r'\n\s*\n+', '\x00', texto)
     texto = re.sub(r'\s*\n\s*', ' ', texto)
     return texto.replace('\x00', '\n\n')
@@ -175,7 +277,7 @@ def arreglar_guiones(texto):
     # has to run before the broken word rule, because "dijo -sin mirarme- que"
     # and "fa- llones" look the same to it
     texto = re.sub(r'(?<=\s)[-‐‑–—]\s*([^-‐‑–—\n]{1,120}?)\s*[-‐‑–—](?=[\s.,;:!?])', r', \1,', texto)
-    texto = re.sub(r'(\w)[-‐‑]\s+(\w)', r'\1\2', texto)
+    texto = re.sub(r'([A-Za-záéíóúüñÁÉÍÓÚÜÑ])[-‐‑¬]\s+([a-záéíóúüñ])', r'\1\2', texto)
     texto = re.sub(r'(?m)^[ \t]*[-‐‑–—][ \t]*', '', texto)
     texto = re.sub(r'(\w)\s*[-‐‑–—](?=\s*[.,;:!?])', r'\1', texto)
     texto = re.sub(r'(?<=\s)[-‐‑–—]\s*(?=\w)', ', ', texto)
@@ -216,10 +318,18 @@ def normalizar_espacios(texto):
 # or from a correction, and read out loud it becomes minutes of one word
 def colapsar_repeticiones(texto, maximo=3):
     texto = re.sub(r'(?i)(\b\S{2,}\b)(\s+\1\b){' + str(maximo) + r',}', r'\1', texto)
+    # secuencias de 2 a 6 palabras repetidas consecutivamente (p. ej. línea leída dos veces)
+    for n in range(6, 1, -1):
+        patron = r'(?i)\b(\w+(?:\s+\w+){' + str(n - 1) + r'})(?:\s+\1\b){2,}'
+        texto = re.sub(patron, r'\1', texto)
     # la deduplicación de frases va párrafo a párrafo, para no aplastar los
     # saltos de línea que puntuar_lineas decidió conservar
-    parrafos = []
+    parrafos, previo_parrafo = [], None
     for parrafo in texto.split('\n\n'):
+        clave_p = re.sub(r'\W+', '', parrafo.lower())
+        if len(clave_p) >= 20 and clave_p == previo_parrafo:
+            continue
+        previo_parrafo = clave_p if clave_p else previo_parrafo
         frases, previa, salida = re.split(r'(?<=[.!?…])\s+', parrafo), None, []
         for frase in frases:
             clave = re.sub(r'\W+', '', frase.lower())
@@ -241,7 +351,10 @@ def normalizar_pausas(texto):
     texto = re.sub(r'\n{2,}', '\x00', texto)
     texto = texto.replace('\n', ' ')
     texto = re.sub(r' *\x00 *', '\n\n', texto)
+    # conserva los puntos suspensivos («...») mientras colapsa puntos dobles accidentales («..»)
+    texto = re.sub(r'\.{3,}', '\x01', texto)
     texto = re.sub(r'([.!?…,;:]) *\1+', r'\1', texto)
+    texto = texto.replace('\x01', '...')
     texto = re.sub(r'[ \t]+', ' ', texto)
     return '\n\n'.join(p.strip() for p in texto.split('\n\n') if p.strip())
 

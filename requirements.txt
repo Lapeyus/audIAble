@@ -8,6 +8,9 @@ streamlit>=1.30.0
 # pre-pdf.py: split a PDF into text files or page images, and PDF export in app.py
 PyMuPDF>=1.23.0
 
+# pre-video.py: turn a phone video of the book into one image per page
+opencv-python-headless>=4.8.0
+
 # pre-cleanup.py and resumen.py: HTML clean-up and sentence tokenization
 beautifulsoup4>=4.12.0
 nltk>=3.8.0

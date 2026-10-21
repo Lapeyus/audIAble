@@ -111,7 +111,7 @@ def procesar_imagenes():
     folder_output = Path(args.folder_output)
     folder_output.mkdir(parents=True, exist_ok=True)
 
-    imagenes = sorted(i for i in folder_input.iterdir() if i.suffix.lower() in ('.png', '.jpg', '.jpeg'))
+    imagenes = sorted(i for i in folder_input.iterdir() if i.suffix.lower() in ('.png', '.jpg', '.jpeg') and i.stem != 'paginas_detectadas' and not i.name.startswith('.'))
     degeneradas = []
     for imagen in imagenes:
         ruta_texto = folder_output / f'{imagen.stem}.txt'

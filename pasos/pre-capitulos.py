@@ -84,7 +84,7 @@ def preguntar_al_modelo(texto):
 # Function to tell a page of the book from a report written by pre-ollama.py,
 # which lives alongside the pages and must never be read out loud
 def es_pagina(ruta):
-    return ruta.suffix == '.txt' and not ruta.name.endswith('.cambios.txt')
+    return ruta.suffix == '.txt' and not ruta.name.endswith('.cambios.txt') and not ruta.name.startswith('.')
 
 
 # Function to sort the pages by their number instead of alphabetically

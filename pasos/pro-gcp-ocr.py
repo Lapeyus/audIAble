@@ -37,7 +37,7 @@ with open(RAIZ / 'config.json') as f:
 # Función para procesar imágenes y generar archivos de texto
 def procesar_imagenes():
     for imagen in folder_input.iterdir():
-        if imagen.suffix in ['.jpg', '.png']:
+        if imagen.suffix.lower() in ['.jpg', '.jpeg', '.png'] and imagen.stem != 'paginas_detectadas' and not imagen.name.startswith('.'):
             ruta_texto = folder_output / f'{imagen.stem}.txt'
             if not ruta_texto.exists():
                 with open(imagen, 'rb') as imagen_archivo:

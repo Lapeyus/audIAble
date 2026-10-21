@@ -170,3 +170,8 @@ trabajo/
 
 # Libros de prueba: no se versionan
 vientosAlisios.txt.pdf
+
+# Escritorio y carpetas de trabajo de otras herramientas
+.DS_Store
+output/
+tmp/

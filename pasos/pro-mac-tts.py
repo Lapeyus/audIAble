@@ -129,7 +129,7 @@ def voz_de_sistema_prestada(voz_id, idioma_pedido):
 # Function to tell a page of the book from a report written by pre-ollama.py,
 # which lives alongside the pages and must never be read out loud
 def es_pagina(ruta):
-    return ruta.suffix == '.txt' and not ruta.name.endswith('.cambios.txt')
+    return ruta.suffix == '.txt' and not ruta.name.endswith('.cambios.txt') and not ruta.name.startswith('.')
 
 
 # Function to split text into parts of maximum size max_bytes. The cut is taken

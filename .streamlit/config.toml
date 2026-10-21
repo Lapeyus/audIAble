@@ -1,0 +1,5 @@
+[server]
+# Un vídeo del libro grabado con el móvil pesa fácilmente varios cientos de MB;
+# el límite por omisión de Streamlit (200 MB) lo rechazaba. Escribir la ruta del
+# archivo en vez de subirlo evita la copia por completo.
+maxUploadSize = 8192

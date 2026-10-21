@@ -1,7 +1,9 @@
 {
     "VisionAPI": {
         "image_context": {
-            "language_hints": ["en"]
+            "language_hints": [
+                "en"
+            ]
         }
     },
     "TextToSpeechAPI": {
@@ -19,11 +21,11 @@
             "speaking_rate": 1
         },
         "Pricing": {
-            "Neural2": 0.000016,
-            "Polyglot": 0.000016,
+            "Neural2": 1.6e-05,
+            "Polyglot": 1.6e-05,
             "Studio": 0.00016,
-            "Standard": 0.000004,
-            "WaveNet": 0.000016
+            "Standard": 4e-06,
+            "WaveNet": 1.6e-05
         }
     },
     "EdgeTTS": {
@@ -78,7 +80,10 @@
         "figuras_s_por_pagina": 25,
         "ocr_mac_s_por_pagina": 4,
         "llm_gemini_caracteres_s": 578,
-        "figuras_gemini_s_por_pagina": 6
+        "figuras_gemini_s_por_pagina": 6,
+        "video_s_por_pagina": 5,
+        "video_caracteres_por_pagina": 1800,
+        "video_proceso_por_segundo": 0.12
     },
     "Figuras": {
         "model_vision": "qwen3.8:27b-mlx",
@@ -99,5 +104,32 @@
             "gemini-2.5-pro": 0.0028
         },
         "usd_por_imagen": 0.0005
+    },
+    "Video": {
+        "fps_muestreo": 4,
+        "quietud_s": 0.8,
+        "umbral_movimiento": 2.5,
+        "factor_movimiento": 1.4,
+        "similitud_minima": 0.45,
+        "recorte": "auto",
+        "capturas_por_pagina": 5
+    },
+    "Rutas": {
+        "biblioteca": "/Volumes/Seagate/audIAble",
+        "pausa_entre_grabaciones_h": 3
+    },
+    "Agentes": {
+        "timeout": 300,
+        "modelos": {
+            "claude": "sonnet"
+        },
+        "umbrales": {
+            "min_word_retention": 0.6,
+            "max_new_words": 0.25,
+            "length_range": [
+                0.55,
+                1.3
+            ]
+        }
     }
 }

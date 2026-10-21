@@ -1,0 +1,120 @@
+{
+  "_nota": "Páginas del libro grabado el 2026-10-18 a las 20:21 (corrida v5), etiquetadas a mano mirando cada imagen. null = dudoso, no cuenta.",
+  "pag_1": {
+    "estado": "no_es_pagina",
+    "mano": false
+  },
+  "pag_2": {
+    "estado": "no_es_pagina",
+    "mano": false
+  },
+  "pag_3": {
+    "estado": "en_blanco",
+    "mano": false
+  },
+  "pag_4": {
+    "estado": null,
+    "mano": false
+  },
+  "pag_5": {
+    "estado": null,
+    "mano": true
+  },
+  "pag_6": {
+    "estado": null,
+    "mano": false
+  },
+  "pag_7": {
+    "estado": "en_blanco",
+    "mano": false
+  },
+  "pag_8": {
+    "estado": "texto_plano",
+    "mano": false
+  },
+  "pag_26": {
+    "estado": "ilustracion",
+    "mano": false
+  },
+  "pag_30": {
+    "estado": "texto_plano",
+    "mano": true
+  },
+  "pag_39": {
+    "estado": "texto_plano",
+    "mano": false
+  },
+  "pag_45": {
+    "estado": "texto_plano",
+    "mano": null
+  },
+  "pag_60": {
+    "estado": "texto_plano",
+    "mano": null
+  },
+  "pag_63": {
+    "estado": "ilustracion",
+    "mano": false
+  },
+  "pag_78": {
+    "estado": "hoja_en_movimiento",
+    "mano": null
+  },
+  "pag_81": {
+    "estado": "texto_plano",
+    "mano": true
+  },
+  "pag_82": {
+    "estado": "texto_plano",
+    "mano": true
+  },
+  "pag_83": {
+    "estado": "ilustracion",
+    "mano": false
+  },
+  "pag_85": {
+    "estado": "texto_plano",
+    "mano": null
+  },
+  "pag_86": {
+    "estado": "texto_plano",
+    "mano": true
+  },
+  "pag_88": {
+    "estado": null,
+    "mano": true
+  },
+  "pag_89": {
+    "estado": "texto_plano",
+    "mano": true
+  },
+  "pag_93": {
+    "estado": "texto_plano",
+    "mano": false
+  },
+  "pag_94": {
+    "estado": null,
+    "mano": true
+  },
+  "pag_100": {
+    "estado": "texto_plano",
+    "mano": null
+  },
+  "pag_105": {
+    "estado": "en_blanco",
+    "mano": false
+  },
+  "pag_110": {
+    "estado": "texto_plano",
+    "mano": true
+  },
+  "pag_115": {
+    "estado": "no_es_pagina",
+    "mano": false
+  },
+  "pag_116": {
+    "estado": "no_es_pagina",
+    "mano": false
+  },
+  "_revision": "Tras la primera corrida (2026-10-19) se revisaron de cerca las 4 discrepancias con TypeSafe: pag_30 y pag_5 sí tienen dedos sobre el texto, en pag_93 los dedos solo tapan el número de página, y pag_94 tiene la esquina levantada (estado dudoso). Las 4 eran errores de la etiqueta."
+}

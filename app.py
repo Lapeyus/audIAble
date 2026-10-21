@@ -1,4 +1,5 @@
 # Importing required libraries
+import os
 import re
 import io
 import json
@@ -12,7 +13,10 @@ from pathlib import Path
 
 import streamlit as st
 
-from nucleo import estimacion, ollama_local
+from nucleo import estimacion, ollama_local, agentes
+from nucleo.estimacion import EXTENSIONES_VIDEO
+from nucleo.exportar import exportar_pdf, exportar_pdf_enriquecido
+from nucleo.rutas import BIBLIOTECA, carpeta_telefono, carpeta_salida
 
 RAIZ = Path(__file__).resolve().parent
 PASOS = RAIZ / 'pasos'
@@ -140,6 +144,9 @@ def selector_modelo(contenedor, etiqueta, tarea, preferido, clave):
     # opción: mucho más rápidos que un modelo local, con coste por carácter
     if tarea in ('texto', 'figuras') and fuente_google():
         disponibles = disponibles + list(CONFIG['GoogleLLM']['models'])
+    # las CLI de agentes instaladas corrigen mirando la imagen de cada página
+    if tarea == 'texto':
+        disponibles = disponibles + agentes.disponibles()
     if not disponibles:
         contenedor.error('Ni Ollama responde ni hay credenciales de Google: no hay modelos disponibles.')
         return None
@@ -147,7 +154,9 @@ def selector_modelo(contenedor, etiqueta, tarea, preferido, clave):
     return contenedor.selectbox(etiqueta, disponibles, index=indice, key=clave,
                                 help='Los locales vienen de tu servidor de Ollama (gratis). Los gemini-* '
                                      'van a Google Vertex con tus credenciales: mucho más rápidos, '
-                                     'con un coste pequeño por carácter que la estimación muestra.')
+                                     'con un coste pequeño por carácter que la estimación muestra. '
+                                     'claude, codex y agy son las CLI de agentes de esta máquina: '
+                                     'con páginas de vídeo o PDF escaneado corrigen mirando la imagen.')
 
 
 # Function to read which voice macOS is set to speak with, to show it next to
@@ -233,90 +242,6 @@ def orden_natural(ruta):
     return (int(numeros[-1]) if numeros else 0, ruta.stem)
 
 
-# Function to write the cleaned text as a PDF, using the PDF library already in
-# the project so no extra dependency is needed
-def exportar_pdf(texto, destino):
-    import fitz
-    documento = fitz.open()
-    ancho, alto, margen = 595, 842, 56
-    caja = fitz.Rect(margen, margen, ancho - margen, alto - margen)
-    pendiente = texto.strip() or ' '
-    while pendiente:
-        corte = min(len(pendiente), 2400)
-        if corte < len(pendiente):
-            espacio = pendiente.rfind(' ', 0, corte)
-            corte = espacio if espacio > 0 else corte
-        bloque, resto = pendiente[:corte], pendiente[corte:].lstrip()
-        pagina = documento.new_page(width=ancho, height=alto)
-        # un valor negativo significa que no cupo nada: se recorta y el sobrante
-        # vuelve a la cola, para que la exportación nunca pierda texto en silencio
-        while pagina.insert_textbox(caja, bloque, fontsize=11, fontname='helv', align=0) < 0 and len(bloque) > 200:
-            recorte = bloque.rfind(' ', 0, int(len(bloque) * 0.9)) or len(bloque) // 2
-            bloque, resto = bloque[:recorte], (bloque[recorte:] + ' ' + resto).strip()
-        pendiente = resto
-    documento.save(destino)
-    documento.close()
-    return destino
-
-
-# Function to build the enriched PDF: each page shows the original page image
-# with the cleaned text laid invisibly on top, so the book looks like the
-# scanned original but can be searched, selected and copied
-def exportar_pdf_enriquecido(paginas_txt, destino, origen_pdf=None, carpeta_img=None, dpi_img=300):
-    import fitz
-
-    # Function to turn a page pixmap into a JPEG at about 150 dpi. The render
-    # comes at OCR resolution as raw PNG, which inflates the PDF to gigabytes;
-    # a compressed page is enough to read on screen and keeps the file small
-    def comprimir_pagina(pix, dpi_origen):
-        if pix.alpha:
-            pix = fitz.Pixmap(pix, 0)
-        if pix.n != 3:
-            pix = fitz.Pixmap(fitz.csRGB, pix)
-        while dpi_origen > 200:
-            pix.shrink(1)
-            dpi_origen /= 2
-        return pix.tobytes('jpeg', jpg_quality=70)
-
-    documento = fitz.open()
-    original = fitz.open(str(origen_pdf)) if origen_pdf else None
-    generadas = 0
-    for ruta in paginas_txt:
-        numeros = re.findall(r'\d+', ruta.stem)
-        numero = int(numeros[-1]) if numeros else 0
-        texto = ruta.read_text(encoding='utf-8')
-
-        imagen = carpeta_img / f'{ruta.stem}.png' if carpeta_img else None
-        if imagen and imagen.exists():
-            pix = fitz.Pixmap(str(imagen))
-            # el tamaño de página se calcula antes de encoger la imagen
-            ancho, alto = pix.width * 72 / dpi_img, pix.height * 72 / dpi_img
-            pagina = documento.new_page(width=ancho, height=alto)
-            pagina.insert_image(pagina.rect, stream=comprimir_pagina(pix, dpi_img))
-        elif original and 0 < numero <= len(original):
-            pix = original[numero - 1].get_pixmap(dpi=150)
-            ancho, alto = original[numero - 1].rect.width, original[numero - 1].rect.height
-            pagina = documento.new_page(width=ancho, height=alto)
-            pagina.insert_image(pagina.rect, stream=comprimir_pagina(pix, 150))
-        else:
-            continue
-
-        # texto invisible (render_mode 3) encogido hasta que quepa en la página
-        caja = fitz.Rect(2, 2, pagina.rect.width - 2, pagina.rect.height - 2)
-        cuerpo = 9.0
-        while cuerpo > 3 and pagina.insert_textbox(caja, texto, fontsize=cuerpo, fontname='helv',
-                                                   render_mode=3, align=0) < 0:
-            cuerpo -= 1
-        generadas += 1
-    if original:
-        original.close()
-    if not generadas:
-        return None
-    documento.save(destino, garbage=4, deflate=True)
-    documento.close()
-    return destino
-
-
 # Function to join audio parts into a single file per division
 def unir_audios(rutas, destino):
     if destino.suffix == '.wav':
@@ -341,30 +266,88 @@ def unir_audios(rutas, destino):
 # ---------------------------------------------------------------- entrada
 
 st.title('🎧 audIAble')
-st.caption('De PDF escaneado a audiolibro: extracción, limpieza, corrección con LLM local y voz.')
+st.caption('De PDF escaneado o vídeo del libro a audiolibro: extracción, limpieza, corrección con LLM local y voz.')
 
 st.header('1. Qué quieres procesar')
 columna_a, columna_b = st.columns([1, 2])
 with columna_a:
-    tipo_entrada = st.radio('Origen', ['Archivo único', 'Carpeta completa'], key='tipo_entrada')
+    tipo_entrada = st.radio('Origen', ['Archivo único (PDF o TXT)', 'Vídeo del libro', 'Carpeta completa'], key='tipo_entrada')
+es_video = tipo_entrada == 'Vídeo del libro'
+es_carpeta = tipo_entrada == 'Carpeta completa'
 with columna_b:
-    ruta_entrada = st.text_input(
-        'Ruta del archivo' if tipo_entrada == 'Archivo único' else 'Ruta de la carpeta',
-        value='' if tipo_entrada == 'Archivo único' else str(RAIZ),
-        help='PDF o TXT. Un TXT se entiende como texto ya extraído, con OCR hecho o sin él.'
-    )
-    subido = st.file_uploader('…o sube un archivo', type=['pdf', 'txt'], key='subida')
+    if es_video:
+        etiqueta, ayuda, tipos = ('Ruta del vídeo, o de la carpeta con sus segmentos',
+                                  'El libro grabado con el móvil (mp4, mov, m4v, avi, mkv o webm) mientras se pasan las '
+                                  'páginas una a una. Si el móvil cortó la grabación en segmentos (en 4K u 8K lo hace cada '
+                                  'diez minutos), da la carpeta que los contiene: se ordenan por nombre y se procesan como '
+                                  'un solo libro, sin repetir la página en la que se cortó. Sus ajustes aparecen debajo.',
+                                  [e[1:] for e in EXTENSIONES_VIDEO])
+    elif es_carpeta:
+        etiqueta, ayuda, tipos = ('Ruta de la carpeta', 'Se procesan todos los PDF, TXT y vídeos que contenga.', None)
+    else:
+        etiqueta, ayuda, tipos = ('Ruta del archivo',
+                                  'PDF o TXT. Un TXT se entiende como texto ya extraído, con OCR hecho o sin él.',
+                                  ['pdf', 'txt'])
+    if es_video:
+        # el teléfono, por USB: adb copia las grabaciones recientes a trabajo/entrada/telefono,
+        # una carpeta por grabación con todos sus segmentos, y el selector rellena la ruta
+        CARPETA_TELEFONO = carpeta_telefono()
+        columna_boton, columna_desde = st.columns([2, 1])
+        desde_telefono = columna_desde.selectbox('Vídeos de', ['24h', '7d', '30d'], index=1, format_func=lambda d: {
+            '24h': 'las últimas 24 horas', '7d': 'los últimos 7 días', '30d': 'los últimos 30 días'}[d])
+        if columna_boton.button('📱 Traer del teléfono por USB', help='Copia con adb los vídeos recientes de la cámara de un '
+                                'Android conectado por USB con la depuración USB activada. Los segmentos de una misma '
+                                'grabación quedan juntos en una carpeta.'):
+            with st.spinner('Buscando el teléfono y copiando…'):
+                proceso = subprocess.run([sys.executable, '-u', str(RAIZ / 'utiles' / 'traer-videos.py'), '--desde', desde_telefono],
+                                         cwd=RAIZ, capture_output=True, text=True)
+            st.code((proceso.stdout + proceso.stderr).strip() or 'Sin salida', language='text')
+            if proceso.returncode == 0:
+                st.session_state.pop('grabacion_telefono', None)
+        grabaciones = sorted((g for g in CARPETA_TELEFONO.iterdir() if g.is_dir() and not g.name.startswith('.')), key=lambda g: g.name, reverse=True) \
+            if CARPETA_TELEFONO.exists() else []
+        if grabaciones:
+            def usar_grabacion():
+                elegida = st.session_state.get('grabacion_telefono')
+                if elegida:
+                    st.session_state[f'ruta_{tipo_entrada}'] = str(CARPETA_TELEFONO / elegida)
+            def segmentos_de(grabacion):
+                if not grabacion:
+                    return ''
+                videos = [v for v in (CARPETA_TELEFONO / grabacion).iterdir()
+                          if v.suffix.lower() in EXTENSIONES_VIDEO and not v.name.startswith('.')]
+                return f'{grabacion}  ({len(videos)} segmento(s))'
+            st.selectbox('Grabaciones traídas del teléfono', [''] + [g.name for g in grabaciones], key='grabacion_telefono',
+                         format_func=segmentos_de, on_change=usar_grabacion, help='Elegir una rellena la ruta de abajo.')
+    ruta_entrada = st.text_input(etiqueta, value=str(RAIZ) if es_carpeta else '', help=ayuda, key=f'ruta_{tipo_entrada}')
+    subidos = []
+    if tipos:
+        subidos = st.file_uploader('…o sube el vídeo, o todos sus segmentos' if es_video else '…o sube un archivo',
+                                   type=tipos, key=f'subida_{tipo_entrada}', accept_multiple_files=es_video)
+        subidos = subidos if isinstance(subidos, list) else ([subidos] if subidos else [])
+        if es_video:
+            st.caption('Subirlo copia el archivo entero a trabajo/entrada; con vídeos de varios GB es mejor escribir su ruta arriba.')
+
+
+# Function to sort files the way a phone numbers them: 1, 2, …, 10 and not 1, 10, 2
+def orden_por_nombre(ruta):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', ruta.name)]
 
 entradas = []
 origen = Path(ruta_entrada.strip()) if ruta_entrada.strip() else None
-if subido is not None:
-    destino_subida = RAIZ / 'trabajo' / 'entrada' / subido.name
-    destino_subida.parent.mkdir(parents=True, exist_ok=True)
-    destino_subida.write_bytes(subido.getbuffer())
-    entradas = [destino_subida]
+if subidos:
+    for subido in subidos:
+        destino_subida = RAIZ / 'trabajo' / 'entrada' / subido.name
+        destino_subida.parent.mkdir(parents=True, exist_ok=True)
+        if not destino_subida.exists() or destino_subida.stat().st_size != subido.size:
+            destino_subida.write_bytes(subido.getbuffer())
+        entradas.append(destino_subida)
+    entradas.sort(key=orden_por_nombre)
 elif origen and origen.exists():
     if origen.is_dir():
-        entradas = sorted(a for a in origen.iterdir() if a.suffix.lower() in ('.pdf', '.txt'))
+        admitidas = EXTENSIONES_VIDEO if es_video else ('.pdf', '.txt') + EXTENSIONES_VIDEO
+        entradas = sorted((a for a in origen.iterdir() if a.suffix.lower() in admitidas and not a.name.startswith('.')),
+                          key=orden_por_nombre)
     else:
         entradas = [origen]
 
@@ -381,23 +364,56 @@ nombre_idioma = st.selectbox(
 idioma = IDIOMAS[nombre_idioma]
 
 hay_pdf = any(e.suffix.lower() == '.pdf' for e in entradas)
+hay_video = any(e.suffix.lower() in EXTENSIONES_VIDEO for e in entradas)
 paginas = st.text_input('Páginas del PDF (1, 1-5, 2,7,9). Vacío = todas', value='1') if hay_pdf else ''
+
+# Un vídeo se convierte primero en una imagen por página: cada pasada de hoja
+# es un pico de movimiento, cada reposo entre dos picos una página. Vision
+# localiza la página en el fotograma, la endereza y la lee para fundir repetidas
+video_doble, video_recorte = False, True
+video_quietud, video_factor = CONFIG['Video']['quietud_s'], CONFIG['Video']['factor_movimiento']
+if hay_video:
+    st.subheader('Vídeo del libro')
+    st.caption('Cada pasada de hoja es un pico de movimiento y cada reposo entre dos picos, una página: se guarda su fotograma '
+               'más nítido, se recorta y endereza la página (Vision, en Mac) y se gira el texto solo. Graba con el móvil fijo '
+               'o al menos estable, deja cada página quieta un par de segundos antes de pasarla, y aparta la mano mientras tanto: '
+               'una pausa a mitad de vuelta de hoja sale como página torcida.')
+    columna_a, columna_b, columna_c = st.columns(3)
+    video_doble = columna_a.checkbox('El libro se ve abierto (dos páginas por toma)', value=False,
+                                     help='Cada toma se parte por la mitad en página izquierda y derecha.')
+    video_recorte = columna_b.checkbox('Recortar y enderezar la página', value=True,
+                                       help='Localiza la página dentro del fotograma y corrige la perspectiva. '
+                                            'Desmárcalo si el detector se equivoca y prefieres el fotograma entero.')
+    with columna_c.expander('Ajuste fino del detector'):
+        video_quietud = st.number_input('Reposo mínimo (s)', 0.2, 10.0, float(CONFIG['Video']['quietud_s']), 0.1,
+                                        help='Cuánto debe durar el reposo entre dos pasadas para contar como página.')
+        video_factor = st.number_input('Sensibilidad a la pasada de hoja', 1.0, 5.0, float(CONFIG['Video']['factor_movimiento']), 0.1,
+                                       help='Una pasada de hoja debe mover la imagen al menos este múltiplo del movimiento '
+                                            'mediano del vídeo. Bájalo si faltan páginas; súbelo si aparecen tomas a medio pasar.')
 
 # ---------------------------------------------------------------- OCR
 
 st.header('2. OCR')
 st.caption('Un PDF con capa de texto no necesita OCR. Actívalo si el PDF es una imagen escaneada o si la capa de texto viene rota.')
-usar_ocr = st.checkbox('Ejecutar OCR sobre las páginas', value=False)
-motor_ocr, modelo_ocr, dpi = None, None, 300
+if hay_video:
+    st.caption('Con un vídeo el OCR es obligatorio: las páginas llegan como fotogramas, sin capa de texto.')
+usar_ocr = st.checkbox('Ejecutar OCR sobre las páginas', value=hay_video, disabled=hay_video) or hay_video
+motor_ocr, modelo_ocr, dpi, ocr_consenso = None, None, 300, False
 llave_ocr, google_ocr_ok = None, True
 gratis_vision = None
 if usar_ocr:
     columna_a, columna_b, columna_c = st.columns(3)
     motores_ocr = (['macOS (Vision)'] if sys.platform == 'darwin' else []) + ['Ollama local', 'Google Cloud Vision']
     motor_ocr = columna_a.selectbox('Motor de OCR', motores_ocr)
-    dpi = columna_b.number_input('Resolución de render (dpi)', 72, 600, 300, 50)
+    dpi = columna_b.number_input('Resolución de render (dpi)', 72, 600, 300, 50, disabled=hay_video and not hay_pdf,
+                                 help='Solo afecta a los PDF; un vídeo se usa a la resolución con la que se grabó.')
     if motor_ocr == 'macOS (Vision)':
         st.caption('El motor del sistema (el mismo de Vista Previa): gratis, local y sin depender de la red.')
+        ocr_consenso = columna_c.checkbox(
+            'Tres lecturas por página (consenso)', value=False,
+            help='Lee cada página tres veces (original, iluminación uniformada y contraste local) y sustituye una línea '
+                 'dudosa solo si las otras dos lecturas coinciden. Deja un informe pag_N.ocr.json con las líneas a revisar. '
+                 'Tarda el triple, y en la evaluación sintética no redujo el error, así que va desmarcado.')
     elif motor_ocr == 'Ollama local':
         modelo_ocr = selector_modelo(columna_c, 'Modelo de visión', 'ocr', CONFIG['OllamaOCR']['model'], 'modelo_ocr')
         st.info('En esta máquina los modelos de visión respondieron muy lentos y vacíos en mis pruebas. '
@@ -453,9 +469,9 @@ guardar_pdf = columna_b.checkbox('PDF solo texto', value=False,
 guardar_pdf_rico = columna_c.checkbox('PDF enriquecido', value=False,
                                       help='Las páginas originales como imagen con el texto limpio '
                                            'superpuesto en una capa invisible: se ve el libro tal cual, '
-                                           'pero se puede buscar, seleccionar y copiar. Necesita un PDF de entrada.')
-if guardar_pdf_rico and entradas and not hay_pdf:
-    st.warning('El PDF enriquecido necesita un PDF de entrada (las páginas originales); con un TXT no hay imagen que superponer.')
+                                           'pero se puede buscar, seleccionar y copiar. Necesita un PDF o un vídeo de entrada.')
+if guardar_pdf_rico and entradas and not (hay_pdf or hay_video):
+    st.warning('El PDF enriquecido necesita un PDF o un vídeo de entrada (las páginas originales); con un TXT no hay imagen que superponer.')
 
 # ---------------------------------------------------------------- voz
 
@@ -537,7 +553,8 @@ if entradas:
             usar_ocr=usar_ocr, motor_ocr=motor_ocr, nivel_limpieza=nivel,
             motor_tts=motor_tts if (generar_audio and voz) else None,
             por_divisiones=por_divisiones, voz_gcp=voz, vision_gratis=gratis_vision,
-            describir_figuras=describir_figuras, llm_modelo=modelo_llm, figuras_modelo=modelo_figuras
+            describir_figuras=describir_figuras, llm_modelo=modelo_llm, figuras_modelo=modelo_figuras,
+            video_segundos=sum(estimacion.duracion_video(e) for e in entradas if e.suffix.lower() in EXTENSIONES_VIDEO)
         )
         columna_a, columna_b, columna_c, columna_d = st.columns(4)
         columna_a.metric('Volumen', f'{total_paginas} pág', f'{total_caracteres:,} caracteres'.replace(',', '.'))
@@ -553,6 +570,10 @@ if entradas:
              for e in calculo['etapas']],
             hide_index=True, use_container_width=True
         )
+        if hay_video:
+            st.caption(f'Con un vídeo el volumen es una suposición (una página cada {CONFIG["Estimacion"]["video_s_por_pagina"]} s '
+                       f'y {CONFIG["Estimacion"]["video_caracteres_por_pagina"]} caracteres por página); '
+                       'el recuento real aparece al detectar las páginas.')
         if hay_pdf and not usar_ocr and total_paginas and total_caracteres < total_paginas * 20:
             st.error('Este PDF apenas tiene capa de texto: parece un escaneo puro. '
                      'Sin OCR, la extracción saldrá vacía y no habrá nada que limpiar ni leer. '
@@ -570,7 +591,8 @@ else:
     st.caption('Elige una entrada para ver la estimación.')
 
 st.header('8. Ejecutar')
-carpeta_trabajo = Path(st.text_input('Carpeta de salida', value=str(RAIZ / 'trabajo' / 'salida')))
+carpeta_trabajo = Path(st.text_input('Carpeta de salida', value=str(carpeta_salida()),
+                                     help='Por omisión, la biblioteca del disco externo (Rutas.biblioteca en config.json) si está montado; si no, trabajo/salida.'))
 empezar_de_cero = st.checkbox(
     'Empezar de cero (vacía la carpeta de salida antes de ejecutar)', value=True,
     help='Evita mezclar este libro con los restos de una corrida anterior: las etapas saltan '
@@ -583,7 +605,7 @@ empezar_de_cero = st.checkbox(
 # audio or reports of the previous one
 def vaciar_salida(carpeta):
     if carpeta.exists():
-        shutil.rmtree(carpeta)
+        shutil.rmtree(carpeta, ignore_errors=True)
     carpeta.mkdir(parents=True, exist_ok=True)
 
 faltan_condiciones = (not entradas
@@ -604,17 +626,46 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
         with st.status('Ejecutando…', expanded=True) as estado:
             # --- extracción
             estado.update(label='Extrayendo el texto')
-            for entrada in entradas:
+            # todos los vídeos son segmentos del mismo libro: van juntos al detector,
+            # que los ordena y funde la página en la que el móvil cortó la grabación
+            videos = [e for e in entradas if e.suffix.lower() in EXTENSIONES_VIDEO]
+            for entrada in [v for v in entradas if v not in videos] + videos[:1]:
                 if entrada.suffix.lower() == '.txt':
                     shutil.copy(entrada, carpeta_txt / entrada.name)
                 elif usar_ocr:
                     carpeta_img = carpeta_trabajo / 'imagenes'
-                    comando = [str(PASOS / 'pre-pdf.py'), '--f', entrada, '--o', carpeta_img, '--m', 'photo', '--dpi', dpi]
-                    if paginas.strip():
-                        comando += ['--p', paginas.strip()]
-                    ejecutar(comando, registro, 'Render de páginas')
-                    if motor_ocr == 'macOS (Vision)':
-                        ejecutar([str(PASOS / 'pro-mac-ocr.py'), '--f', carpeta_img, '--o', carpeta_txt, '--idioma', idioma or 'es'],
+                    if entrada.suffix.lower() in EXTENSIONES_VIDEO:
+                        estado.update(label=f'Detectando las páginas en {len(videos)} vídeo(s)')
+                        comando = [str(PASOS / 'pre-video.py'), '--f'] + videos + ['--o', carpeta_img,
+                                   '--quietud', video_quietud, '--factor', video_factor, '--idioma', idioma or 'es',
+                                   '--recorte', 'auto' if video_recorte else 'no', '--brutos', '--guardar-capturas']
+                        if video_doble:
+                            comando.append('--doble')
+                        ejecutar(comando, registro, 'Páginas del vídeo')
+                        # el recuento real sustituye a la suposición de la estimación
+                        total_paginas = len(list(carpeta_img.glob('pag_*.png')))
+                        if not total_paginas:
+                            raise RuntimeError('No se detectó ninguna página en el vídeo. Baja el reposo mínimo o la '
+                                               'sensibilidad en el paso 1, o graba dejando cada página quieta más tiempo.')
+                        estado.update(label=f'{total_paginas} páginas detectadas; leyendo con OCR')
+                        hoja_contactos = carpeta_img / 'paginas_detectadas.jpg'
+                        if hoja_contactos.exists():
+                            st.image(str(hoja_contactos), caption=f'{total_paginas} páginas detectadas en el vídeo, con el segundo '
+                                     'del que sale cada una. Si sobra alguna (una toma a medio pasar, la mesa vacía), borra su '
+                                     f'pag_N.png y su pag_N.txt de {carpeta_trabajo} y vuelve a ejecutar sin «Empezar de cero».')
+                    else:
+                        comando = [str(PASOS / 'pre-pdf.py'), '--f', entrada, '--o', carpeta_img, '--m', 'photo', '--dpi', dpi]
+                        if paginas.strip():
+                            comando += ['--p', paginas.strip()]
+                        ejecutar(comando, registro, 'Render de páginas')
+                    if motor_ocr == 'macOS (Vision)' and (carpeta_img / 'capturas').is_dir():
+                        # páginas de vídeo: se leen todas las capturas de cada página y se
+                        # combinan renglón a renglón (de 214 a 32-45 ilegibles en el libro de prueba)
+                        ejecutar([str(PASOS / 'pro-multiframe-ocr.py'), '--f', carpeta_img, '--o', carpeta_txt, '--idioma', idioma or 'es'],
+                                 registro, 'OCR multifotograma', barra, total_paginas, r'^pag_\d+:')
+                    elif motor_ocr == 'macOS (Vision)':
+                        ejecutar([str(PASOS / 'pro-mac-ocr.py'), '--f', carpeta_img, '--o', carpeta_txt, '--idioma', idioma or 'es',
+                                  '--calidad', 'alta' if ocr_consenso else 'base'],
                                  registro, 'OCR de macOS', barra, total_paginas, r'caracteres,')
                     elif motor_ocr == 'Ollama local':
                         ejecutar([str(PASOS / 'pro-ollama-ocr.py'), '--f', carpeta_img, '--o', carpeta_txt, '--m', modelo_ocr],
@@ -644,13 +695,18 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
                     ejecutar(comando, registro, 'Extracción de texto', barra, total_paginas, r'extracted and saved')
 
             # --- guardarraíl: si la extracción salió vacía, parar aquí con causa
-            paginas_extraidas = [a for a in carpeta_txt.iterdir() if a.suffix == '.txt' and 'cambios' not in a.name]
+            paginas_extraidas = [a for a in carpeta_txt.iterdir() if a.suffix == '.txt' and 'cambios' not in a.name and not a.name.startswith('.')]
             extraido = sum(len(a.read_text(encoding='utf-8', errors='ignore').strip()) for a in paginas_extraidas)
             if not paginas_extraidas or extraido < max(len(paginas_extraidas), 1) * 20:
+                if hay_video:
+                    causa = ('El OCR apenas reconoció texto en las páginas del vídeo. Revisa las imágenes en '
+                             f'{carpeta_trabajo / "imagenes"} (y los fotogramas enteros en su subcarpeta brutos): '
+                             'falta de luz, desenfoque o un recorte equivocado son las causas habituales.')
+                else:
+                    causa = ('Este PDF no tiene capa de texto utilizable: es un escaneo. '
+                             'Vuelve al paso 2 y activa «Ejecutar OCR» para leer las páginas como imágenes.')
                 raise RuntimeError(
-                    f'La extracción produjo {len(paginas_extraidas)} página(s) con solo {extraido} caracteres en total. '
-                    'Este PDF no tiene capa de texto utilizable: es un escaneo. '
-                    'Vuelve al paso 2 y activa «Ejecutar OCR» para leer las páginas como imágenes.')
+                    f'La extracción produjo {len(paginas_extraidas)} página(s) con solo {extraido} caracteres en total. ' + causa)
 
             # --- limpieza
             if usa_reglas:
@@ -659,8 +715,15 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
                          registro, 'Limpieza', barra, total_paginas, r'caracteres\)')
             if usa_llm:
                 estado.update(label='Corrigiendo el escaneado con el LLM local (puede tardar)')
-                ejecutar([str(PASOS / 'pre-ollama.py'), '--f', carpeta_txt, '--m', modelo_llm, '--idioma', idioma or 'es'],
-                         registro, 'Corrección con LLM', barra, total_paginas, r'(informe|se salta)')
+                comando = [str(PASOS / 'pre-ollama.py'), '--f', carpeta_txt, '--m', modelo_llm, '--idioma', idioma or 'es']
+                carpeta_img = carpeta_trabajo / 'imagenes'
+                if agentes.es_agente(modelo_llm) and usar_ocr and carpeta_img.is_dir():
+                    # el agente corrige mirando cada página; con borrador multifotograma, además
+                    # sabe que lo que la mano tapa en la imagen puede estar bien leído en el borrador
+                    comando += ['--img', carpeta_img]
+                    if (carpeta_img / 'capturas').is_dir():
+                        comando.append('--borrador-multiple')
+                ejecutar(comando, registro, 'Corrección con LLM', barra, total_paginas, r'(informe|se salta)')
 
             # --- divisiones
             divisiones = None
@@ -676,10 +739,14 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
             estado.update(label='Guardando el texto limpio')
             if len(entradas) == 1:
                 nombre_base = entradas[0].stem
+            elif origen and origen.is_dir():
+                nombre_base = origen.name
             else:
-                nombre_base = (origen.name if origen and origen.is_dir() else 'libro')
+                # varios segmentos del mismo vídeo: lo que sus nombres tienen en común
+                comun = re.sub(r'[\d_\-~ .]+$', '', os.path.commonprefix([e.stem for e in entradas]))
+                nombre_base = comun if len(comun) >= 4 else 'libro'
             nombre_base = re.sub(r'[^\w\-. ]+', '_', nombre_base).strip() or 'libro'
-            paginas_txt = sorted((a for a in carpeta_txt.iterdir() if a.suffix == '.txt' and 'cambios' not in a.name), key=orden_natural)
+            paginas_txt = sorted((a for a in carpeta_txt.iterdir() if a.suffix == '.txt' and 'cambios' not in a.name and not a.name.startswith('.')), key=orden_natural)
             texto_completo = '\n\n'.join(a.read_text(encoding='utf-8') for a in paginas_txt)
             exportados = []
             if guardar_txt:
@@ -692,7 +759,8 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
                 pdf_origen = next((e for e in entradas if e.suffix.lower() == '.pdf'), None)
                 carpeta_imagenes = (carpeta_trabajo / 'imagenes') if usar_ocr else None
                 rico = exportar_pdf_enriquecido(paginas_txt, carpeta_trabajo / f'{nombre_base} (enriquecido).pdf',
-                                                origen_pdf=pdf_origen, carpeta_img=carpeta_imagenes, dpi_img=dpi)
+                                                origen_pdf=pdf_origen, carpeta_img=carpeta_imagenes,
+                                                dpi_img=None if hay_video and not hay_pdf else dpi)
                 if rico:
                     exportados.append(rico)
                 else:
@@ -715,7 +783,7 @@ if st.button('▶️ Ejecutar el pipeline', type='primary', disabled=faltan_cond
                 extension = 'mp3' if motor_tts == 'Microsoft Edge' else 'wav'
                 # se descarta el audio que una corrida anterior pudiera haber generado
                 # a partir de un informe de cambios, que no es texto del libro
-                partes = sorted((p for p in carpeta_audio.glob(f'*.{extension}') if '.cambios' not in p.name),
+                partes = sorted((p for p in carpeta_audio.glob(f'*.{extension}') if '.cambios' not in p.name and not p.name.startswith('.')),
                                 key=orden_natural)
                 if por_divisiones and divisiones:
                     for division in divisiones:
